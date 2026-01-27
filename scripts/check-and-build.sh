@@ -15,12 +15,26 @@ fi
 GIT_BRANCH="${GIT_BRANCH:-main}"
 DOCKERFILE_PATH="${DOCKERFILE_PATH:-.}"
 DOCKER_IMAGE_NAME="${DOCKER_IMAGE_NAME:-auto-built-image}"
-STATE_FILE="/app/state/last_commit.txt"
+GIT_PAT_FILE="${GIT_PAT_FILE:-/app/secrets/pat}"
+STATE_DIR="/app/state"
 
 echo "Git Repository: $GIT_REPO"
-echo "Git Branch: $GIT_BRANCH"
+echo "Git Branch(es): $GIT_BRANCH"
 echo "Dockerfile Path: $DOCKERFILE_PATH"
 echo "Docker Image Name: $DOCKER_IMAGE_NAME"
+
+# Function to read PAT from file or environment
+read_git_pat() {
+    if [ -f "$GIT_PAT_FILE" ]; then
+        echo "Reading PAT from file: $GIT_PAT_FILE"
+        GIT_PAT=$(cat "$GIT_PAT_FILE" | tr -d '\n\r ')
+    elif [ -n "$GIT_PAT" ]; then
+        echo "Using PAT from environment variable"
+    else
+        echo "No PAT configured (public repository access only)"
+        GIT_PAT=""
+    fi
+}
 
 # Function to configure git credentials
 configure_git_credentials() {
@@ -41,6 +55,12 @@ configure_git_credentials() {
     fi
 }
 
+# Read PAT before configuring credentials
+read_git_pat
+
+# Read PAT before configuring credentials
+read_git_pat
+
 # Clone or update repository
 REPO_DIR="/app/repo"
 
@@ -51,7 +71,9 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     configure_git_credentials
     
     # Clone without filtering output to preserve exit code
-    git clone -b "$GIT_BRANCH" "$GIT_REPO" "$REPO_DIR"
+    # Clone with first branch only, will fetch others later
+    FIRST_BRANCH=$(echo "$GIT_BRANCH" | cut -d',' -f1 | xargs)
+    git clone -b "$FIRST_BRANCH" "$GIT_REPO" "$REPO_DIR"
     CLONE_STATUS=$?
     
     if [ $CLONE_STATUS -ne 0 ]; then
@@ -60,67 +82,94 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     fi
 else
     echo "Updating existing repository..."
-    cd "$REPO_DIR"
-    
-    # Configure git credentials if PAT is provided
-    configure_git_credentials
-    
-    git fetch origin "$GIT_BRANCH"
-    git reset --hard "origin/$GIT_BRANCH"
 fi
 
 cd "$REPO_DIR"
 
-# Get current commit hash
-CURRENT_COMMIT=$(git rev-parse HEAD)
-echo "Current commit: $CURRENT_COMMIT"
+# Configure git credentials if PAT is provided (for existing repos)
+configure_git_credentials
 
-# Check if this is a new commit
-if [ -f "$STATE_FILE" ]; then
-    LAST_COMMIT=$(cat "$STATE_FILE")
-    echo "Last processed commit: $LAST_COMMIT"
+# Process each branch
+IFS=',' read -ra BRANCHES <<< "$GIT_BRANCH"
+CHANGES_DETECTED=false
+
+for BRANCH in "${BRANCHES[@]}"; do
+    BRANCH=$(echo "$BRANCH" | xargs)  # Trim whitespace
+    echo ""
+    echo "--- Processing branch: $BRANCH ---"
     
-    if [ "$CURRENT_COMMIT" = "$LAST_COMMIT" ]; then
-        echo "No changes detected. Skipping build."
-        exit 0
+    # Fetch and update branch
+    git fetch origin "$BRANCH"
+    git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
+    git reset --hard "origin/$BRANCH"
+    
+    # Get current commit hash
+    CURRENT_COMMIT=$(git rev-parse HEAD)
+    echo "Current commit: $CURRENT_COMMIT"
+    
+    # Check if this is a new commit
+    STATE_FILE="$STATE_DIR/last_commit_${BRANCH}.txt"
+    if [ -f "$STATE_FILE" ]; then
+        LAST_COMMIT=$(cat "$STATE_FILE")
+        echo "Last processed commit: $LAST_COMMIT"
+        
+        if [ "$CURRENT_COMMIT" = "$LAST_COMMIT" ]; then
+            echo "No changes detected on branch $BRANCH"
+            continue
+        fi
+    else
+        echo "First run for branch $BRANCH - no previous commit found"
     fi
-else
-    echo "First run - no previous commit found"
-fi
-
-echo "Changes detected! Starting Docker build..."
-
-# Build Docker image
-DOCKERFILE_FULL_PATH="$REPO_DIR/$DOCKERFILE_PATH/Dockerfile"
-
-if [ ! -f "$DOCKERFILE_FULL_PATH" ]; then
-    echo "ERROR: Dockerfile not found at $DOCKERFILE_FULL_PATH"
-    exit 1
-fi
-
-BUILD_CONTEXT="$REPO_DIR/$DOCKERFILE_PATH"
-echo "Building Docker image from $BUILD_CONTEXT..."
-
-# Build with timestamp tag
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-IMAGE_TAG="${DOCKER_IMAGE_NAME}:${TIMESTAMP}"
-IMAGE_LATEST="${DOCKER_IMAGE_NAME}:latest"
-
-docker build -t "$IMAGE_TAG" -t "$IMAGE_LATEST" "$BUILD_CONTEXT"
-
-if [ $? -eq 0 ]; then
-    echo "Docker build successful!"
-    echo "Tagged as: $IMAGE_TAG"
-    echo "Tagged as: $IMAGE_LATEST"
     
-    # Save current commit as last processed
-    echo "$CURRENT_COMMIT" > "$STATE_FILE"
-    echo "Commit hash saved to state file"
-else
-    echo "ERROR: Docker build failed"
-    exit 1
+    echo "Changes detected on branch $BRANCH! Starting Docker build..."
+    CHANGES_DETECTED=true
+    
+    # Build Docker image
+    DOCKERFILE_FULL_PATH="$REPO_DIR/$DOCKERFILE_PATH/Dockerfile"
+    
+    if [ ! -f "$DOCKERFILE_FULL_PATH" ]; then
+        echo "ERROR: Dockerfile not found at $DOCKERFILE_FULL_PATH"
+        continue
+    fi
+    
+    BUILD_CONTEXT="$REPO_DIR/$DOCKERFILE_PATH"
+    echo "Building Docker image from $BUILD_CONTEXT..."
+    
+    # Build with timestamp and branch tag
+    TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+    BRANCH_SAFE=$(echo "$BRANCH" | tr '/' '-')
+    IMAGE_TAG="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}-${TIMESTAMP}"
+    IMAGE_BRANCH="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}"
+    
+    docker build -t "$IMAGE_TAG" -t "$IMAGE_BRANCH" "$BUILD_CONTEXT"
+    
+    if [ $? -eq 0 ]; then
+        echo "Docker build successful!"
+        echo "Tagged as: $IMAGE_TAG"
+        echo "Tagged as: $IMAGE_BRANCH"
+        
+        # Tag as latest only for main/master branch
+        if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+            IMAGE_LATEST="${DOCKER_IMAGE_NAME}:latest"
+            docker tag "$IMAGE_TAG" "$IMAGE_LATEST"
+            echo "Tagged as: $IMAGE_LATEST"
+        fi
+        
+        # Save current commit as last processed
+        echo "$CURRENT_COMMIT" > "$STATE_FILE"
+        echo "Commit hash saved to state file"
+    else
+        echo "ERROR: Docker build failed for branch $BRANCH"
+    fi
+done
+
+if [ "$CHANGES_DETECTED" = false ]; then
+    echo ""
+    echo "No changes detected on any branch. Skipping build."
+    exit 0
 fi
 
+echo ""
 echo "==================================="
 echo "Build process completed successfully"
 echo "==================================="

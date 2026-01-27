@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   syno-builder:
-    build: .
+    image: ghcr.io/wuhao5/syno-builder:latest
+    # Or build locally:
+    # build: .
     container_name: syno-builder
     restart: unless-stopped
     env_file:
@@ -12,11 +14,14 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Recommended: Persist state across restarts
       - syno-builder-state:/app/state
+      # Optional: Mount PAT file (recommended for production)
+      # - /path/to/pat:/app/secrets/pat:ro
     environment:
       # These can be overridden in .env file
       - GIT_REPO=${GIT_REPO}
       - GIT_BRANCH=${GIT_BRANCH:-main}
       - GIT_PAT=${GIT_PAT}
+      - GIT_PAT_FILE=${GIT_PAT_FILE:-/app/secrets/pat}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-60}
       - DOCKERFILE_PATH=${DOCKERFILE_PATH:-.}
       - DOCKER_IMAGE_NAME=${DOCKER_IMAGE_NAME:-auto-built-image}

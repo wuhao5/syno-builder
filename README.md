@@ -4,33 +4,55 @@ The auto git puller and docker builder for Synology NAS - automatically monitors
 
 ## Features
 
-- 🔄 Automatically monitors a git repository for changes
+- 🔄 Automatically monitors git repositories for changes
 - 🐳 Builds Docker images using Docker-in-Docker when changes are detected
 - ⏰ Configurable check interval (default: every 1 hour)
 - 🔐 Supports both public and private repositories with authentication
 - 📦 Minimal Alpine Linux base image for efficiency
-- 🏷️ Automatic image tagging with timestamps and 'latest'
+- 🏷️ Automatic image tagging with timestamps and branch names
+- 🌿 Multiple branch support - monitor and build multiple branches simultaneously
+- 🔒 Secure credential management via mounted files or environment variables
 
 ## Quick Start
 
-### 1. Build the Syno-Builder Image
+### 1. Pull the Image from GitHub Container Registry
+
+```bash
+docker pull ghcr.io/wuhao5/syno-builder:latest
+```
+
+Or build locally:
 
 ```bash
 docker build -t syno-builder .
 ```
 
-### 2. Configure Environment Variables
+### 2. Prepare Authentication (for private repositories)
 
-Copy the example environment file and edit it:
+Create a file with your Personal Access Token:
 
 ```bash
-cp .env.example .env
-# Edit .env with your configuration
+echo "ghp_your_token_here" > /path/to/pat
+chmod 600 /path/to/pat
 ```
 
 ### 3. Run on Synology NAS
 
-Run the container with Docker-in-Docker support:
+**With mounted PAT file (recommended):**
+
+```bash
+docker run -d \
+  --name syno-builder \
+  -e GIT_REPO=https://github.com/user/repo.git \
+  -e GIT_BRANCH=main \
+  -v /path/to/pat:/app/secrets/pat:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v syno-builder-state:/app/state \
+  --restart unless-stopped \
+  ghcr.io/wuhao5/syno-builder:latest
+```
+
+**With environment variable:**
 
 ```bash
 docker run -d \
@@ -38,7 +60,8 @@ docker run -d \
   --env-file .env \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v syno-builder-state:/app/state \
-  syno-builder
+  --restart unless-stopped \
+  ghcr.io/wuhao5/syno-builder:latest
 ```
 
 **Important**: The `-v /var/run/docker.sock:/var/run/docker.sock` mount is required for Docker-in-Docker functionality.
@@ -53,8 +76,11 @@ All configuration is done through environment variables:
 
 ### Optional
 
-- `GIT_BRANCH` - The branch to monitor (default: `main`)
-- `GIT_PAT` - Personal Access Token for private repositories (optional for public repos)
+- `GIT_BRANCH` - The branch(es) to monitor (default: `main`)
+  - Single branch: `GIT_BRANCH=main`
+  - Multiple branches: `GIT_BRANCH=main,develop,staging` (comma-separated)
+- `GIT_PAT_FILE` - Path to mounted file containing Personal Access Token (default: `/app/secrets/pat`)
+- `GIT_PAT` - Personal Access Token as environment variable (fallback if file doesn't exist)
 - `CHECK_INTERVAL` - How often to check for changes in minutes (default: `60`)
   - For best results, use intervals that divide evenly into 60 (e.g., 1, 5, 10, 15, 30, 60)
   - For intervals > 60 minutes, use multiples of 60 (e.g., 120, 180, 240 for 2, 3, 4 hours)
@@ -63,17 +89,41 @@ All configuration is done through environment variables:
 
 ### Example Configuration
 
+**Single branch:**
 ```env
-# Monitor a private repository
 GIT_REPO=https://github.com/myuser/myapp.git
 GIT_BRANCH=develop
-GIT_PAT=ghp_YourPersonalAccessTokenHere
 CHECK_INTERVAL=30
 DOCKERFILE_PATH=docker
 DOCKER_IMAGE_NAME=myapp
 ```
 
+**Multiple branches:**
+```env
+GIT_REPO=https://github.com/myuser/myapp.git
+GIT_BRANCH=main,develop,staging
+CHECK_INTERVAL=60
+DOCKER_IMAGE_NAME=myapp
+```
+
 ## Authentication for Private Repositories
+
+### Recommended: File-based Authentication
+
+1. Create a file containing your Personal Access Token:
+   ```bash
+   echo "your_token_here" > /path/to/pat
+   chmod 600 /path/to/pat
+   ```
+
+2. Mount the file when running the container:
+   ```bash
+   -v /path/to/pat:/app/secrets/pat:ro
+   ```
+
+### Alternative: Environment Variable
+
+Set the token in the `GIT_PAT` environment variable (less secure, not recommended for production).
 
 ### GitHub Personal Access Token (PAT)
 
@@ -101,15 +151,19 @@ The token will be automatically used for authentication when cloning and pulling
 ## How It Works
 
 1. **Initial Run**: On startup, the container immediately checks the repository and builds if a Dockerfile is found
-2. **Change Detection**: The container tracks the latest commit hash in `/app/state/last_commit.txt`
-3. **Periodic Checks**: A cron job runs at the specified interval to check for new commits
-4. **Automatic Build**: When changes are detected, Docker builds the image from the repository
-5. **Tagging**: Built images are tagged with both a timestamp (e.g., `myapp:20240127-143000`) and `latest`
+2. **Change Detection**: The container tracks the latest commit hash per branch in `/app/state/last_commit_<branch>.txt`
+3. **Periodic Checks**: A cron job runs at the specified interval to check for new commits on all configured branches
+4. **Automatic Build**: When changes are detected on any branch, Docker builds the image from that branch
+5. **Tagging**: 
+   - Each branch build is tagged with branch name and timestamp (e.g., `myapp:main-20240127-143000`)
+   - Each branch gets a persistent tag (e.g., `myapp:main`, `myapp:develop`)
+   - Main/master branch also tagged as `latest`
 
 ## Volume Mounts
 
 - `/var/run/docker.sock` - Required for Docker-in-Docker
 - `/app/state` - Recommended for persisting commit tracking across container restarts
+- `/app/secrets/pat` - Optional mounted file containing Personal Access Token
 
 ## Monitoring
 
