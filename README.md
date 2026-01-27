@@ -86,6 +86,11 @@ All configuration is done through environment variables:
   - For intervals > 60 minutes, use multiples of 60 (e.g., 120, 180, 240 for 2, 3, 4 hours)
 - `DOCKERFILE_PATH` - Path to the Dockerfile within the repository (default: `.`)
 - `DOCKER_IMAGE_NAME` - Name for the built Docker image (default: `auto-built-image`)
+- `POST_BUILD_SCRIPT` - Path to a script to run after successful build (optional)
+  - The script runs in detached mode, so long-running processes like `docker compose up -d` won't block
+  - Available environment variables in the script: `IMAGE_TAG`, `IMAGE_BRANCH`, `IMAGE_LATEST`, `BRANCH`, `DOCKER_IMAGE_NAME`, `REPO_DIR`
+  - Example: `/app/scripts/post-build.sh`
+  - See `scripts/post-build.sh.example` for examples
 
 ### Example Configuration
 
@@ -242,6 +247,62 @@ Run multiple syno-builder containers, one for each repository:
 docker run -d --name syno-builder-repo1 --env-file .env.repo1 -v /var/run/docker.sock:/var/run/docker.sock syno-builder
 docker run -d --name syno-builder-repo2 --env-file .env.repo2 -v /var/run/docker.sock:/var/run/docker.sock syno-builder
 ```
+
+### Post-Build Script
+
+You can run custom scripts after a successful build by setting the `POST_BUILD_SCRIPT` environment variable:
+
+```bash
+# Create your post-build script
+cat > /path/to/post-build.sh << 'EOF'
+#!/bin/bash
+echo "Deploying $IMAGE_TAG"
+docker stop my-app || true
+docker rm my-app || true
+docker run -d --name my-app "$IMAGE_TAG"
+EOF
+
+chmod +x /path/to/post-build.sh
+
+# Mount and configure the script
+docker run -d \
+  --name syno-builder \
+  -e GIT_REPO=https://github.com/user/repo.git \
+  -e POST_BUILD_SCRIPT=/app/custom/post-build.sh \
+  -v /path/to/post-build.sh:/app/custom/post-build.sh:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v syno-builder-state:/app/state \
+  --restart unless-stopped \
+  ghcr.io/wuhao5/syno-builder:latest
+```
+
+The post-build script runs in detached mode, so long-running commands like `docker compose up -d` won't block the build process. See `scripts/post-build.sh.example` for more examples.
+
+### Docker Image Cleanup
+
+When Docker builds images, it creates intermediate layers (cached as `<none>:<none>` images). These layers are **useful for speeding up future builds** through layer caching. However, on storage-limited systems like Synology NAS, you may want to periodically clean up unused images.
+
+**Recommendation**: Keep build cache for performance, but run cleanup periodically if storage is a concern.
+
+```bash
+# Remove dangling images only (safe, keeps layer cache)
+docker exec syno-builder docker image prune -f
+
+# Remove all unused images (more aggressive, may slow down future builds)
+docker exec syno-builder docker image prune -a -f
+
+# Full system cleanup (removes unused containers, networks, images, build cache)
+docker exec syno-builder docker system prune -f
+```
+
+You can also add cleanup to your post-build script to automatically clean up after each build:
+
+```bash
+# Add to your post-build script
+docker image prune -f
+```
+
+**Note**: The trade-off is between storage space and build speed. Removing cached layers means Docker will need to rebuild those layers from scratch on the next build.
 
 ## License
 

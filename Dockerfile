@@ -1,5 +1,8 @@
 FROM alpine:latest
 
+# Set Docker API version to 1.43 to ensure compatibility
+ENV DOCKER_API_VERSION=1.43
+
 # Install required packages
 RUN apk add --no-cache \
     git \
