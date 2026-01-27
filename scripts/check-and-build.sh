@@ -162,25 +162,33 @@ for BRANCH in "${BRANCHES[@]}"; do
             echo "Running post-build script: $POST_BUILD_SCRIPT"
             
             # Make script executable if not already
-            chmod +x "$POST_BUILD_SCRIPT" 2>/dev/null || true
+            if ! chmod +x "$POST_BUILD_SCRIPT" 2>/dev/null; then
+                echo "WARNING: Could not make post-build script executable (may already be executable or permission denied)"
+            fi
             
             # Run script in background with setsid to detach from parent process
             # This ensures processes like 'docker compose up -d' won't be killed when this script exits
             # Set environment variables that the post-build script might need
             export IMAGE_TAG IMAGE_BRANCH IMAGE_LATEST BRANCH DOCKER_IMAGE_NAME REPO_DIR
             
+            # Determine log file location (prefer /var/log, fallback to /tmp)
+            POST_BUILD_LOG="/var/log/post-build.log"
+            if [ ! -w "/var/log" ]; then
+                POST_BUILD_LOG="/tmp/post-build.log"
+            fi
+            
             # Use nohup and setsid for full detachment
             if command -v setsid >/dev/null 2>&1; then
                 # Run with setsid (preferred method for full detachment)
-                setsid "$POST_BUILD_SCRIPT" > /var/log/post-build.log 2>&1 &
+                setsid "$POST_BUILD_SCRIPT" > "$POST_BUILD_LOG" 2>&1 &
             else
                 # Fallback to nohup if setsid is not available
-                nohup "$POST_BUILD_SCRIPT" > /var/log/post-build.log 2>&1 &
+                nohup "$POST_BUILD_SCRIPT" > "$POST_BUILD_LOG" 2>&1 &
             fi
             
             POST_BUILD_PID=$!
             echo "Post-build script started with PID $POST_BUILD_PID (detached)"
-            echo "Logs: /var/log/post-build.log"
+            echo "Logs: $POST_BUILD_LOG"
         elif [ -n "$POST_BUILD_SCRIPT" ] && [ ! -f "$POST_BUILD_SCRIPT" ]; then
             echo "WARNING: POST_BUILD_SCRIPT is set but file not found: $POST_BUILD_SCRIPT"
         fi
