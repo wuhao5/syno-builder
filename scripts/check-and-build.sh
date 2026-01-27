@@ -58,9 +58,6 @@ configure_git_credentials() {
 # Read PAT before configuring credentials
 read_git_pat
 
-# Read PAT before configuring credentials
-read_git_pat
-
 # Clone or update repository
 REPO_DIR="/app/repo"
 

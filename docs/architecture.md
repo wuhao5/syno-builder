@@ -98,7 +98,8 @@ Git Repository → Clone/Update → Commit Hash Check
 | Path | Purpose |
 |------|---------|
 | `/app/repo/` | Cloned git repository |
-| `/app/state/last_commit.txt` | Last processed commit hash |
+| `/app/state/last_commit_<branch>.txt` | Last processed commit hash per branch |
+| `/app/secrets/pat` | Mounted PAT file (optional) |
 | `/var/log/cron.log` | Cron job execution logs |
 | `~/.git-credentials` | Stored git credentials (secure) |
 
