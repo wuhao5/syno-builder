@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  syno-builder:
+    build: .
+    container_name: syno-builder
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Required: Docker socket for Docker-in-Docker
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Recommended: Persist state across restarts
+      - syno-builder-state:/app/state
+    environment:
+      # These can be overridden in .env file
+      - GIT_REPO=${GIT_REPO}
+      - GIT_BRANCH=${GIT_BRANCH:-main}
+      - GIT_PAT=${GIT_PAT}
+      - CHECK_INTERVAL=${CHECK_INTERVAL:-60}
+      - DOCKERFILE_PATH=${DOCKERFILE_PATH:-.}
+      - DOCKER_IMAGE_NAME=${DOCKER_IMAGE_NAME:-auto-built-image}
+
+volumes:
+  syno-builder-state:

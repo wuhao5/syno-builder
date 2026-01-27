@@ -1,2 +1,177 @@
-# syno-builder
-The auto git puller and docker builder for synology nas
+# Syno-Builder
+
+The auto git puller and docker builder for Synology NAS - automatically monitors a git repository for changes and builds Docker images when changes are detected.
+
+## Features
+
+- 🔄 Automatically monitors a git repository for changes
+- 🐳 Builds Docker images using Docker-in-Docker when changes are detected
+- ⏰ Configurable check interval (default: every 1 hour)
+- 🔐 Supports both public and private repositories with authentication
+- 📦 Minimal Alpine Linux base image for efficiency
+- 🏷️ Automatic image tagging with timestamps and 'latest'
+
+## Quick Start
+
+### 1. Build the Syno-Builder Image
+
+```bash
+docker build -t syno-builder .
+```
+
+### 2. Configure Environment Variables
+
+Copy the example environment file and edit it:
+
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+### 3. Run on Synology NAS
+
+Run the container with Docker-in-Docker support:
+
+```bash
+docker run -d \
+  --name syno-builder \
+  --env-file .env \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v syno-builder-state:/app/state \
+  syno-builder
+```
+
+**Important**: The `-v /var/run/docker.sock:/var/run/docker.sock` mount is required for Docker-in-Docker functionality.
+
+## Configuration
+
+All configuration is done through environment variables:
+
+### Required
+
+- `GIT_REPO` - The git repository URL to monitor (e.g., `https://github.com/username/repo.git`)
+
+### Optional
+
+- `GIT_BRANCH` - The branch to monitor (default: `main`)
+- `GIT_PAT` - Personal Access Token for private repositories (optional for public repos)
+- `CHECK_INTERVAL` - How often to check for changes in minutes (default: `60`)
+- `DOCKERFILE_PATH` - Path to the Dockerfile within the repository (default: `.`)
+- `DOCKER_IMAGE_NAME` - Name for the built Docker image (default: `auto-built-image`)
+
+### Example Configuration
+
+```env
+# Monitor a private repository
+GIT_REPO=https://github.com/myuser/myapp.git
+GIT_BRANCH=develop
+GIT_PAT=ghp_YourPersonalAccessTokenHere
+CHECK_INTERVAL=30
+DOCKERFILE_PATH=docker
+DOCKER_IMAGE_NAME=myapp
+```
+
+## Authentication for Private Repositories
+
+### GitHub Personal Access Token (PAT)
+
+1. Go to GitHub Settings → Developer settings → Personal access tokens
+2. Generate a new token with `repo` scope
+3. Set the token in the `GIT_PAT` environment variable
+
+The token will be automatically used for authentication when cloning and pulling from the repository.
+
+## How It Works
+
+1. **Initial Run**: On startup, the container immediately checks the repository and builds if a Dockerfile is found
+2. **Change Detection**: The container tracks the latest commit hash in `/app/state/last_commit.txt`
+3. **Periodic Checks**: A cron job runs at the specified interval to check for new commits
+4. **Automatic Build**: When changes are detected, Docker builds the image from the repository
+5. **Tagging**: Built images are tagged with both a timestamp (e.g., `myapp:20240127-143000`) and `latest`
+
+## Volume Mounts
+
+- `/var/run/docker.sock` - Required for Docker-in-Docker
+- `/app/state` - Recommended for persisting commit tracking across container restarts
+
+## Monitoring
+
+View the logs to monitor the build process:
+
+```bash
+# View live logs
+docker logs -f syno-builder
+
+# View cron job logs
+docker exec syno-builder tail -f /var/log/cron.log
+```
+
+## Example: Complete Setup
+
+```bash
+# 1. Create a directory for the project
+mkdir ~/syno-builder
+cd ~/syno-builder
+
+# 2. Create .env file
+cat > .env << EOF
+GIT_REPO=https://github.com/username/myproject.git
+GIT_BRANCH=main
+GIT_PAT=ghp_yourtoken
+CHECK_INTERVAL=60
+DOCKER_IMAGE_NAME=myproject
+EOF
+
+# 3. Build syno-builder
+docker build -t syno-builder .
+
+# 4. Run syno-builder
+docker run -d \
+  --name syno-builder \
+  --env-file .env \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v syno-builder-state:/app/state \
+  --restart unless-stopped \
+  syno-builder
+```
+
+## Troubleshooting
+
+### Container stops immediately
+- Check that `GIT_REPO` is set correctly
+- Verify credentials if using a private repository
+
+### Docker build fails
+- Ensure the repository contains a valid Dockerfile at the specified path
+- Check Docker socket is mounted: `/var/run/docker.sock:/var/run/docker.sock`
+- Verify you have permissions to access the Docker socket on Synology
+
+### Changes not detected
+- Check the cron logs: `docker exec syno-builder tail -f /var/log/cron.log`
+- Verify the `CHECK_INTERVAL` is set correctly
+- Ensure the container has network access to fetch from git
+
+## Advanced Usage
+
+### Running Manual Build Check
+
+```bash
+docker exec syno-builder /app/check-and-build.sh
+```
+
+### Changing Check Interval Without Restart
+
+Not supported - you must restart the container with a new `CHECK_INTERVAL` value.
+
+### Multiple Repositories
+
+Run multiple syno-builder containers, one for each repository:
+
+```bash
+docker run -d --name syno-builder-repo1 --env-file .env.repo1 -v /var/run/docker.sock:/var/run/docker.sock syno-builder
+docker run -d --name syno-builder-repo2 --env-file .env.repo2 -v /var/run/docker.sock:/var/run/docker.sock syno-builder
+```
+
+## License
+
+MIT
