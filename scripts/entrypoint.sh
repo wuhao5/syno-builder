@@ -37,14 +37,33 @@ echo "Setting up cron job to run every $CHECK_INTERVAL minutes..."
 
 # Create cron job
 # Convert minutes to cron format
+# Note: Cron has limitations - it can only handle intervals that divide evenly into 60 minutes
+# For intervals > 60, we convert to hours (e.g., 120 min = every 2 hours)
 if [ "$CHECK_INTERVAL" -eq 60 ]; then
     CRON_SCHEDULE="0 * * * *"  # Every hour
 elif [ "$CHECK_INTERVAL" -lt 60 ]; then
-    CRON_SCHEDULE="*/$CHECK_INTERVAL * * * *"  # Every N minutes
+    # Check if interval divides evenly into 60
+    if [ $((60 % CHECK_INTERVAL)) -eq 0 ]; then
+        CRON_SCHEDULE="*/$CHECK_INTERVAL * * * *"  # Every N minutes
+    else
+        echo "WARNING: CHECK_INTERVAL ($CHECK_INTERVAL) does not divide evenly into 60"
+        echo "Using closest valid interval: every $CHECK_INTERVAL minutes (may not be exact)"
+        CRON_SCHEDULE="*/$CHECK_INTERVAL * * * *"  # Every N minutes (cron will round)
+    fi
 else
-    # For intervals > 60 minutes, calculate hours
-    HOURS=$((CHECK_INTERVAL / 60))
-    CRON_SCHEDULE="0 */$HOURS * * *"  # Every N hours
+    # For intervals >= 60 minutes, convert to hours
+    if [ $((CHECK_INTERVAL % 60)) -eq 0 ]; then
+        HOURS=$((CHECK_INTERVAL / 60))
+        CRON_SCHEDULE="0 */$HOURS * * *"  # Every N hours on the hour
+    else
+        echo "WARNING: CHECK_INTERVAL ($CHECK_INTERVAL) is not a multiple of 60"
+        echo "Rounding down to nearest hour"
+        HOURS=$((CHECK_INTERVAL / 60))
+        if [ "$HOURS" -eq 0 ]; then
+            HOURS=1
+        fi
+        CRON_SCHEDULE="0 */$HOURS * * *"  # Every N hours
+    fi
 fi
 
 echo "$CRON_SCHEDULE /app/check-and-build.sh >> /var/log/cron.log 2>&1" > /etc/crontabs/root

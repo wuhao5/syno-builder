@@ -56,6 +56,8 @@ All configuration is done through environment variables:
 - `GIT_BRANCH` - The branch to monitor (default: `main`)
 - `GIT_PAT` - Personal Access Token for private repositories (optional for public repos)
 - `CHECK_INTERVAL` - How often to check for changes in minutes (default: `60`)
+  - For best results, use intervals that divide evenly into 60 (e.g., 1, 5, 10, 15, 30, 60)
+  - For intervals > 60 minutes, use multiples of 60 (e.g., 120, 180, 240 for 2, 3, 4 hours)
 - `DOCKERFILE_PATH` - Path to the Dockerfile within the repository (default: `.`)
 - `DOCKER_IMAGE_NAME` - Name for the built Docker image (default: `auto-built-image`)
 
@@ -79,7 +81,22 @@ DOCKER_IMAGE_NAME=myapp
 2. Generate a new token with `repo` scope
 3. Set the token in the `GIT_PAT` environment variable
 
+### Other Git Providers
+
+This solution supports any git provider (GitHub, GitLab, Bitbucket, self-hosted, etc.). The authentication mechanism automatically detects the hostname from your `GIT_REPO` URL and configures credentials accordingly.
+
+For GitLab, Bitbucket, or other providers:
+- Use their respective Personal Access Tokens or App Passwords
+- Set the token in the `GIT_PAT` environment variable
+- The system will automatically configure credentials for the correct hostname
+
 The token will be automatically used for authentication when cloning and pulling from the repository.
+
+**Security Note**: 
+- Never commit your `.env` file with real credentials to version control
+- The PAT is stored securely in the container using git credential helper
+- Ensure your `.env` file has restricted permissions: `chmod 600 .env`
+- On Synology NAS, consider using Docker Compose secrets or environment variables in the Docker UI instead of a `.env` file for production use
 
 ## How It Works
 

@@ -22,6 +22,25 @@ echo "Git Branch: $GIT_BRANCH"
 echo "Dockerfile Path: $DOCKERFILE_PATH"
 echo "Docker Image Name: $DOCKER_IMAGE_NAME"
 
+# Function to configure git credentials
+configure_git_credentials() {
+    if [ -n "$GIT_PAT" ]; then
+        # Extract hostname from git repository URL
+        GIT_HOST=$(echo "$GIT_REPO" | sed -E 's|^(https?://)?([^/]+).*|\2|')
+        
+        if [ -z "$GIT_HOST" ]; then
+            echo "WARNING: Could not extract hostname from GIT_REPO"
+            GIT_HOST="github.com"
+        fi
+        
+        # Configure git credential helper to use stored credentials
+        git config --global credential.helper store
+        # Store credentials securely (not in command line)
+        echo "https://oauth2:${GIT_PAT}@${GIT_HOST}" > ~/.git-credentials 2>/dev/null || true
+        chmod 600 ~/.git-credentials 2>/dev/null || true
+    fi
+}
+
 # Clone or update repository
 REPO_DIR="/app/repo"
 
@@ -29,25 +48,14 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     echo "Cloning repository for the first time..."
     
     # Configure git credentials if PAT is provided
-    if [ -n "$GIT_PAT" ]; then
-        # Extract protocol and URL parts
-        REPO_URL="$GIT_REPO"
-        if [[ $REPO_URL =~ ^https:// ]]; then
-            REPO_URL="${REPO_URL#https://}"
-            GIT_URL="https://$GIT_PAT@$REPO_URL"
-        elif [[ $REPO_URL =~ ^http:// ]]; then
-            REPO_URL="${REPO_URL#http://}"
-            GIT_URL="http://$GIT_PAT@$REPO_URL"
-        else
-            GIT_URL="$GIT_REPO"
-        fi
-    else
-        GIT_URL="$GIT_REPO"
-    fi
+    configure_git_credentials
     
-    git clone -b "$GIT_BRANCH" "$GIT_URL" "$REPO_DIR"
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to clone repository"
+    # Clone without filtering output to preserve exit code
+    git clone -b "$GIT_BRANCH" "$GIT_REPO" "$REPO_DIR"
+    CLONE_STATUS=$?
+    
+    if [ $CLONE_STATUS -ne 0 ]; then
+        echo "ERROR: Failed to clone repository (exit code: $CLONE_STATUS)"
         exit 1
     fi
 else
@@ -55,10 +63,7 @@ else
     cd "$REPO_DIR"
     
     # Configure git credentials if PAT is provided
-    if [ -n "$GIT_PAT" ]; then
-        git config credential.helper store
-        echo "https://$GIT_PAT@github.com" > ~/.git-credentials 2>/dev/null || true
-    fi
+    configure_git_credentials
     
     git fetch origin "$GIT_BRANCH"
     git reset --hard "origin/$GIT_BRANCH"
