@@ -35,7 +35,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,prefix=,format=short
+            # Always tag with git hash (short format, no prefix)
+            type=sha,format=short
+            # For main branch: tag with 'main' and 'latest'
+            # For other branches: tag with branch name
             type=ref,event=branch,enable=${{ github.ref_name != 'main' }}
             type=raw,value=main,enable=${{ github.ref_name == 'main' }}
             type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
