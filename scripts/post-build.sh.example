@@ -1,0 +1,29 @@
+#!/bin/bash
+# Example post-build script
+# This script runs after a successful Docker build
+# It runs in detached mode, so processes won't be killed when the parent exits
+
+echo "Post-build script executed at $(date)"
+echo "Built image: $IMAGE_TAG"
+echo "Branch: $BRANCH"
+
+# Example 1: Start a docker compose application
+# cd /path/to/compose/dir && docker compose up -d
+
+# Example 2: Deploy the newly built image
+# docker stop my-app || true
+# docker rm my-app || true
+# docker run -d --name my-app "$IMAGE_TAG"
+
+# Example 3: Push to a registry
+# docker push "$IMAGE_TAG"
+
+# Example 4: Send notification
+# curl -X POST https://your-webhook-url \
+#   -H "Content-Type: application/json" \
+#   -d "{\"text\":\"Build completed: $IMAGE_TAG\"}"
+
+# Example 5: Run cleanup of old images (optional - removes dangling images)
+# docker image prune -f
+
+echo "Post-build script completed"

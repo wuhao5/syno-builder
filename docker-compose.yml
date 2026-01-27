@@ -16,6 +16,8 @@ services:
       - syno-builder-state:/app/state
       # Optional: Mount PAT file (recommended for production)
       # - /path/to/pat:/app/secrets/pat:ro
+      # Optional: Mount post-build script
+      # - /path/to/post-build.sh:/app/scripts/post-build.sh:ro
     environment:
       # These can be overridden in .env file
       - GIT_REPO=${GIT_REPO}
@@ -25,6 +27,8 @@ services:
       - CHECK_INTERVAL=${CHECK_INTERVAL:-60}
       - DOCKERFILE_PATH=${DOCKERFILE_PATH:-.}
       - DOCKER_IMAGE_NAME=${DOCKER_IMAGE_NAME:-auto-built-image}
+      # Optional: Post-build script path
+      # - POST_BUILD_SCRIPT=${POST_BUILD_SCRIPT:-}
 
 volumes:
   syno-builder-state:
