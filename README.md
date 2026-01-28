@@ -92,6 +92,58 @@ All configuration is done through environment variables:
   - Example: `/app/scripts/post-build.sh`
   - See `scripts/post-build.sh.example` for examples
 
+### Docker Build Environment Variables
+
+The following environment variables are automatically passed to the docker build process as build arguments:
+- `GIT_COMMIT_HASH` - Full commit hash of the current build
+- `GIT_COMMIT_SHORT` - Short commit hash (first 7 characters)
+- `GIT_BRANCH` - Branch name being built
+- `GIT_REPO` - Git repository URL
+- `BUILD_TIMESTAMP` - Timestamp of the build (YYYYMMDD-HHMMSS format)
+
+To use these in your Dockerfile:
+```dockerfile
+ARG GIT_COMMIT_HASH
+ARG GIT_BRANCH
+ARG BUILD_TIMESTAMP
+ENV GIT_COMMIT=${GIT_COMMIT_HASH}
+ENV GIT_BRANCH=${GIT_BRANCH}
+LABEL build.timestamp=${BUILD_TIMESTAMP}
+```
+
+### Docker Build Secrets
+
+- `SYNO_DOCKER_SECRETS` - Optional path to a local directory containing secret files for docker build
+  - If set, each file in this directory will be passed to docker build using BuildKit's `--secret` flag
+  - If not set, no secrets will be available during the build
+  - Example: `SYNO_DOCKER_SECRETS=/path/to/build-secrets`
+
+Example usage in Dockerfile with BuildKit secrets:
+```dockerfile
+# Access secrets during build - secrets are NOT persisted in image layers when used this way
+# Each file in SYNO_DOCKER_SECRETS is passed as --secret id=<filename>,src=<filepath>
+RUN --mount=type=secret,id=api-key,target=/run/secrets/api-key \
+    export API_KEY=$(cat /run/secrets/api-key) && \
+    # Use API_KEY for configuration without persisting it
+    echo "API key loaded for build"
+
+# WARNING: Copying secrets to the image will persist them in layers (not recommended)
+# RUN --mount=type=secret,id=api-key,target=/run/secrets/api-key \
+#     cp /run/secrets/api-key /app/config/api-key.txt
+```
+
+**Example**: If you have `/path/to/build-secrets/database.conf` and `/path/to/build-secrets/api.key`, they will be passed as:
+- `--secret id=database.conf,src=/path/to/build-secrets/database.conf`
+- `--secret id=api.key,src=/path/to/build-secrets/api.key`
+
+**Note**: The syno-builder container needs access to the secrets directory. When using docker-compose, mount the secrets directory:
+```yaml
+volumes:
+  - /path/to/build-secrets:/build-secrets:ro
+environment:
+  - SYNO_DOCKER_SECRETS=/build-secrets
+```
+
 ### Example Configuration
 
 **Single branch:**

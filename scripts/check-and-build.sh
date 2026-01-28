@@ -142,9 +142,44 @@ for BRANCH in "${BRANCHES[@]}"; do
     IMAGE_TAG="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}-${TIMESTAMP}"
     IMAGE_BRANCH="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}"
     
-    docker build -t "$IMAGE_TAG" -t "$IMAGE_BRANCH" "$BUILD_CONTEXT"
+    # Populate git environment variables for docker build
+    GIT_COMMIT_HASH="$CURRENT_COMMIT"
+    GIT_COMMIT_SHORT=$(echo "$CURRENT_COMMIT" | cut -c1-7)
+    GIT_BRANCH_NAME="$BRANCH"
+    GIT_REPO_URL="$GIT_REPO"
+    BUILD_TIMESTAMP="$TIMESTAMP"
     
-    if [ $? -eq 0 ]; then
+    # Handle SYNO_DOCKER_SECRETS - make secrets available during build
+    # Build secret mount arguments for each file in the secrets directory
+    # Use array to properly handle filenames with spaces
+    SECRET_ARGS=()
+    if [ -n "$SYNO_DOCKER_SECRETS" ] && [ -d "$SYNO_DOCKER_SECRETS" ]; then
+        echo "Secrets directory configured: $SYNO_DOCKER_SECRETS"
+        for secret_file in "$SYNO_DOCKER_SECRETS"/*; do
+            if [ -f "$secret_file" ]; then
+                secret_name=$(basename "$secret_file")
+                echo "  Mounting secret: $secret_name"
+                SECRET_ARGS+=(--secret "id=$secret_name,src=$secret_file")
+            fi
+        done
+    fi
+    
+    # Build docker image with build args and secrets
+    # Enable BuildKit for secret support
+    DOCKER_BUILDKIT=1 docker build \
+        --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
+        --build-arg GIT_COMMIT_SHORT="$GIT_COMMIT_SHORT" \
+        --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
+        --build-arg GIT_REPO="$GIT_REPO_URL" \
+        --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
+        "${SECRET_ARGS[@]}" \
+        -t "$IMAGE_TAG" \
+        -t "$IMAGE_BRANCH" \
+        "$BUILD_CONTEXT"
+    
+    BUILD_STATUS=$?
+    
+    if [ $BUILD_STATUS -eq 0 ]; then
         echo "Docker build successful!"
         echo "Tagged as: $IMAGE_TAG"
         echo "Tagged as: $IMAGE_BRANCH"
