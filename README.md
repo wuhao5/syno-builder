@@ -113,15 +113,16 @@ LABEL build.timestamp=${BUILD_TIMESTAMP}
 
 ### Docker Build Secrets
 
-- `SYNO_DOCKER_SECRETS` - Optional path to a local directory containing secret files for docker build
-  - If set, each file in this directory will be passed to docker build using BuildKit's `--secret` flag
-  - If not set, no secrets will be available during the build
-  - Example: `SYNO_DOCKER_SECRETS=/path/to/build-secrets`
+Docker build secrets are automatically available if you mount secret files to `/app/secrets` directory.
+- Each file in `/app/secrets` (except `pat`) will be passed to docker build using BuildKit's `--secret` flag
+- The `pat` file is reserved for git authentication and will not be included as a build secret
+- If the directory doesn't exist or is empty, no secrets will be available during the build
+- Mount your secrets with: `-v /path/to/local/secrets:/app/secrets:ro`
 
 Example usage in Dockerfile with BuildKit secrets:
 ```dockerfile
 # Access secrets during build - secrets are NOT persisted in image layers when used this way
-# Each file in SYNO_DOCKER_SECRETS is passed as --secret id=<filename>,src=<filepath>
+# Each file in /app/secrets (except 'pat') is passed as --secret id=<filename>,src=<filepath>
 RUN --mount=type=secret,id=api-key,target=/run/secrets/api-key \
     export API_KEY=$(cat /run/secrets/api-key) && \
     # Use API_KEY for configuration without persisting it
@@ -132,16 +133,20 @@ RUN --mount=type=secret,id=api-key,target=/run/secrets/api-key \
 #     cp /run/secrets/api-key /app/config/api-key.txt
 ```
 
-**Example**: If you have `/path/to/build-secrets/database.conf` and `/path/to/build-secrets/api.key`, they will be passed as:
-- `--secret id=database.conf,src=/path/to/build-secrets/database.conf`
-- `--secret id=api.key,src=/path/to/build-secrets/api.key`
+**Example**: If you have `/path/to/secrets/database.conf` and `/path/to/secrets/api.key`, and optionally `/path/to/secrets/pat` for git auth, mount them with:
+```bash
+-v /path/to/secrets:/app/secrets:ro
+```
 
-**Note**: The syno-builder container needs access to the secrets directory. When using docker-compose, mount the secrets directory:
+The PAT file will be used for git authentication, and the other files will be passed as build secrets:
+- `--secret id=database.conf,src=/app/secrets/database.conf`
+- `--secret id=api.key,src=/app/secrets/api.key`
+- (PAT file is excluded from build secrets)
+
+**Docker Compose example**:
 ```yaml
 volumes:
-  - /path/to/build-secrets:/build-secrets:ro
-environment:
-  - SYNO_DOCKER_SECRETS=/build-secrets
+  - /path/to/secrets:/app/secrets:ro  # Contains pat, database.conf, api.key, etc.
 ```
 
 ### Example Configuration

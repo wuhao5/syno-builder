@@ -149,15 +149,21 @@ for BRANCH in "${BRANCHES[@]}"; do
     GIT_REPO_URL="$GIT_REPO"
     BUILD_TIMESTAMP="$TIMESTAMP"
     
-    # Handle SYNO_DOCKER_SECRETS - make secrets available during build
+    # Handle Docker build secrets - make secrets available during build
     # Build secret mount arguments for each file in the secrets directory
     # Use array to properly handle filenames with spaces
+    # Note: Excludes 'pat' file which is used for git authentication
     SECRET_ARGS=()
-    if [ -n "$SYNO_DOCKER_SECRETS" ] && [ -d "$SYNO_DOCKER_SECRETS" ]; then
-        echo "Secrets directory configured: $SYNO_DOCKER_SECRETS"
-        for secret_file in "$SYNO_DOCKER_SECRETS"/*; do
+    SECRETS_DIR="/app/secrets"
+    if [ -d "$SECRETS_DIR" ]; then
+        echo "Secrets directory found: $SECRETS_DIR"
+        for secret_file in "$SECRETS_DIR"/*; do
             if [ -f "$secret_file" ]; then
                 secret_name=$(basename "$secret_file")
+                # Skip the PAT file used for git authentication
+                if [ "$secret_name" = "pat" ]; then
+                    continue
+                fi
                 echo "  Mounting secret: $secret_name"
                 SECRET_ARGS+=(--secret "id=$secret_name,src=$secret_file")
             fi

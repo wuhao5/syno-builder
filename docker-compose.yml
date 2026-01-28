@@ -14,12 +14,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Recommended: Persist state across restarts
       - syno-builder-state:/app/state
-      # Optional: Mount PAT file (recommended for production)
+      # Optional: Mount PAT file individually (if not mounting entire /app/secrets directory)
       # - /path/to/pat:/app/secrets/pat:ro
       # Optional: Mount post-build script
       # - /path/to/post-build.sh:/app/scripts/post-build.sh:ro
-      # Optional: Mount secrets directory for docker builds
-      # - /path/to/build-secrets:/build-secrets:ro
+      # Optional: Mount entire secrets directory (for both PAT and docker build secrets)
+      # The PAT file will be used for git auth and automatically excluded from build secrets
+      # - /path/to/secrets:/app/secrets:ro
     environment:
       # These can be overridden in .env file
       - GIT_REPO=${GIT_REPO}
@@ -31,8 +32,6 @@ services:
       - DOCKER_IMAGE_NAME=${DOCKER_IMAGE_NAME:-auto-built-image}
       # Optional: Post-build script path
       # - POST_BUILD_SCRIPT=${POST_BUILD_SCRIPT:-}
-      # Optional: Docker build secrets
-      # - SYNO_DOCKER_SECRETS=${SYNO_DOCKER_SECRETS:-}
 
 volumes:
   syno-builder-state:
