@@ -114,14 +114,15 @@ LABEL build.timestamp=${BUILD_TIMESTAMP}
 ### Docker Build Secrets
 
 Docker build secrets are automatically available if you mount secret files to `/app/secrets` directory.
-- Each file in `/app/secrets` will be passed to docker build using BuildKit's `--secret` flag
+- Each file in `/app/secrets` (except `pat`) will be passed to docker build using BuildKit's `--secret` flag
+- The `pat` file is reserved for git authentication and will not be included as a build secret
 - If the directory doesn't exist or is empty, no secrets will be available during the build
 - Mount your secrets with: `-v /path/to/local/secrets:/app/secrets:ro`
 
 Example usage in Dockerfile with BuildKit secrets:
 ```dockerfile
 # Access secrets during build - secrets are NOT persisted in image layers when used this way
-# Each file in /app/secrets is passed as --secret id=<filename>,src=<filepath>
+# Each file in /app/secrets (except 'pat') is passed as --secret id=<filename>,src=<filepath>
 RUN --mount=type=secret,id=api-key,target=/run/secrets/api-key \
     export API_KEY=$(cat /run/secrets/api-key) && \
     # Use API_KEY for configuration without persisting it
@@ -132,19 +133,20 @@ RUN --mount=type=secret,id=api-key,target=/run/secrets/api-key \
 #     cp /run/secrets/api-key /app/config/api-key.txt
 ```
 
-**Example**: If you have `/path/to/build-secrets/database.conf` and `/path/to/build-secrets/api.key`, mount them with:
+**Example**: If you have `/path/to/secrets/database.conf` and `/path/to/secrets/api.key`, and optionally `/path/to/secrets/pat` for git auth, mount them with:
 ```bash
--v /path/to/build-secrets:/app/secrets:ro
+-v /path/to/secrets:/app/secrets:ro
 ```
 
-They will be passed as:
+The PAT file will be used for git authentication, and the other files will be passed as build secrets:
 - `--secret id=database.conf,src=/app/secrets/database.conf`
 - `--secret id=api.key,src=/app/secrets/api.key`
+- (PAT file is excluded from build secrets)
 
 **Docker Compose example**:
 ```yaml
 volumes:
-  - /path/to/build-secrets:/app/secrets:ro
+  - /path/to/secrets:/app/secrets:ro  # Contains pat, database.conf, api.key, etc.
 ```
 
 ### Example Configuration
