@@ -161,17 +161,19 @@ for BRANCH in "${BRANCHES[@]}"; do
     else
         # Create empty temporary directory for secrets if not configured
         SECRETS_DIR=$(mktemp -d)
+        chmod 700 "$SECRETS_DIR"
         echo "No secrets directory configured, using empty temp directory: $SECRETS_DIR"
         USE_TEMP_SECRETS=true
     fi
     
     # Build secret mount arguments for each file in the secrets directory
-    SECRET_ARGS=""
+    # Use array to properly handle filenames with spaces
+    SECRET_ARGS=()
     if [ -d "$SECRETS_DIR" ]; then
         for secret_file in "$SECRETS_DIR"/*; do
             if [ -f "$secret_file" ]; then
                 secret_name=$(basename "$secret_file")
-                SECRET_ARGS="$SECRET_ARGS --secret id=$secret_name,src=$secret_file"
+                SECRET_ARGS+=(--secret "id=$secret_name,src=$secret_file")
             fi
         done
     fi
@@ -185,7 +187,7 @@ for BRANCH in "${BRANCHES[@]}"; do
         --build-arg GIT_REPO="$GIT_REPO_URL" \
         --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
         --build-arg SYNO_DOCKER_MOUNT="$SYNO_DOCKER_MOUNT" \
-        $SECRET_ARGS \
+        "${SECRET_ARGS[@]}" \
         -t "$IMAGE_TAG" \
         -t "$IMAGE_BRANCH" \
         "$BUILD_CONTEXT"
