@@ -19,7 +19,7 @@ services:
       # Optional: Mount post-build script
       # - /path/to/post-build.sh:/app/scripts/post-build.sh:ro
       # Optional: Mount secrets directory for docker builds
-      # - /path/to/build-secrets:/build-secrets:ro
+      # - /path/to/build-secrets:/app/secrets:ro
     environment:
       # These can be overridden in .env file
       - GIT_REPO=${GIT_REPO}
@@ -31,8 +31,6 @@ services:
       - DOCKER_IMAGE_NAME=${DOCKER_IMAGE_NAME:-auto-built-image}
       # Optional: Post-build script path
       # - POST_BUILD_SCRIPT=${POST_BUILD_SCRIPT:-}
-      # Optional: Docker build secrets
-      # - SYNO_DOCKER_SECRETS=${SYNO_DOCKER_SECRETS:-}
 
 volumes:
   syno-builder-state:
