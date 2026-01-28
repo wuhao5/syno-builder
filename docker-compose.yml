@@ -33,7 +33,6 @@ services:
       # - POST_BUILD_SCRIPT=${POST_BUILD_SCRIPT:-}
       # Optional: Docker build secrets
       # - SYNO_DOCKER_SECRETS=${SYNO_DOCKER_SECRETS:-}
-      # - SYNO_DOCKER_MOUNT=${SYNO_DOCKER_MOUNT:-/secrets}
 
 volumes:
   syno-builder-state:

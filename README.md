@@ -100,7 +100,6 @@ The following environment variables are automatically passed to the docker build
 - `GIT_BRANCH` - Branch name being built
 - `GIT_REPO` - Git repository URL
 - `BUILD_TIMESTAMP` - Timestamp of the build (YYYYMMDD-HHMMSS format)
-- `SYNO_DOCKER_MOUNT` - Mount path for secrets inside docker build (default: `/secrets`)
 
 To use these in your Dockerfile:
 ```dockerfile
@@ -116,12 +115,8 @@ LABEL build.timestamp=${BUILD_TIMESTAMP}
 
 - `SYNO_DOCKER_SECRETS` - Optional path to a local directory containing secret files for docker build
   - If set, each file in this directory will be passed to docker build using BuildKit's `--secret` flag
-  - If not set, an empty temporary directory will be used (no secrets available)
+  - If not set, no secrets will be available during the build
   - Example: `SYNO_DOCKER_SECRETS=/path/to/build-secrets`
-- `SYNO_DOCKER_MOUNT` - Informational build argument for recommended secrets mount path (default: `/secrets`)
-  - This is only passed as a build argument and does not control actual secret mounting
-  - The actual mount path is controlled by the `target` parameter in your Dockerfile's `RUN --mount` directive
-  - Useful as a reference value in your Dockerfile
 
 Example usage in Dockerfile with BuildKit secrets:
 ```dockerfile

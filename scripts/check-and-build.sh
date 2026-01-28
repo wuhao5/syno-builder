@@ -17,7 +17,6 @@ DOCKERFILE_PATH="${DOCKERFILE_PATH:-.}"
 DOCKER_IMAGE_NAME="${DOCKER_IMAGE_NAME:-auto-built-image}"
 GIT_PAT_FILE="${GIT_PAT_FILE:-/app/secrets/pat}"
 POST_BUILD_SCRIPT="${POST_BUILD_SCRIPT:-}"
-SYNO_DOCKER_MOUNT="${SYNO_DOCKER_MOUNT:-/secrets}"
 STATE_DIR="/app/state"
 
 echo "Git Repository: $GIT_REPO"
@@ -26,9 +25,6 @@ echo "Dockerfile Path: $DOCKERFILE_PATH"
 echo "Docker Image Name: $DOCKER_IMAGE_NAME"
 if [ -n "$POST_BUILD_SCRIPT" ]; then
     echo "Post-build script: $POST_BUILD_SCRIPT"
-fi
-if [ -n "$SYNO_DOCKER_SECRETS" ]; then
-    echo "Secrets directory: $SYNO_DOCKER_SECRETS -> $SYNO_DOCKER_MOUNT"
 fi
 
 # Function to read PAT from file or environment
@@ -154,25 +150,15 @@ for BRANCH in "${BRANCHES[@]}"; do
     BUILD_TIMESTAMP="$TIMESTAMP"
     
     # Handle SYNO_DOCKER_SECRETS - make secrets available during build
-    if [ -n "$SYNO_DOCKER_SECRETS" ] && [ -d "$SYNO_DOCKER_SECRETS" ]; then
-        echo "Secrets directory configured: $SYNO_DOCKER_SECRETS"
-        SECRETS_DIR="$SYNO_DOCKER_SECRETS"
-        USE_TEMP_SECRETS=false
-    else
-        # Create empty temporary directory for secrets if not configured
-        SECRETS_DIR=$(mktemp -d)
-        chmod 700 "$SECRETS_DIR"
-        echo "No secrets directory configured, using empty temp directory: $SECRETS_DIR"
-        USE_TEMP_SECRETS=true
-    fi
-    
     # Build secret mount arguments for each file in the secrets directory
     # Use array to properly handle filenames with spaces
     SECRET_ARGS=()
-    if [ -d "$SECRETS_DIR" ]; then
-        for secret_file in "$SECRETS_DIR"/*; do
+    if [ -n "$SYNO_DOCKER_SECRETS" ] && [ -d "$SYNO_DOCKER_SECRETS" ]; then
+        echo "Secrets directory configured: $SYNO_DOCKER_SECRETS"
+        for secret_file in "$SYNO_DOCKER_SECRETS"/*; do
             if [ -f "$secret_file" ]; then
                 secret_name=$(basename "$secret_file")
+                echo "  Mounting secret: $secret_name"
                 SECRET_ARGS+=(--secret "id=$secret_name,src=$secret_file")
             fi
         done
@@ -186,18 +172,12 @@ for BRANCH in "${BRANCHES[@]}"; do
         --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
         --build-arg GIT_REPO="$GIT_REPO_URL" \
         --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
-        --build-arg SYNO_DOCKER_MOUNT="$SYNO_DOCKER_MOUNT" \
         "${SECRET_ARGS[@]}" \
         -t "$IMAGE_TAG" \
         -t "$IMAGE_BRANCH" \
         "$BUILD_CONTEXT"
     
     BUILD_STATUS=$?
-    
-    # Clean up temp directory if we created one
-    if [ "$USE_TEMP_SECRETS" = true ]; then
-        rm -rf "$SECRETS_DIR"
-    fi
     
     if [ $BUILD_STATUS -eq 0 ]; then
         echo "Docker build successful!"
