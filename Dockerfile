@@ -7,6 +7,7 @@ ENV DOCKER_API_VERSION=1.43
 RUN apk add --no-cache \
     git \
     docker-cli \
+    docker-cli-buildx \
     bash \
     curl \
     dcron \
