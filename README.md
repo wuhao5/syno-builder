@@ -86,6 +86,12 @@ All configuration is done through environment variables:
   - For intervals > 60 minutes, use multiples of 60 (e.g., 120, 180, 240 for 2, 3, 4 hours)
 - `DOCKERFILE_PATH` - Path to the Dockerfile within the repository (default: `.`)
 - `DOCKER_IMAGE_NAME` - Name for the built Docker image (default: `auto-built-image`)
+- `BUILD_SCRIPT` - Path to a custom build script that replaces the default docker build command (optional)
+  - Use this to customize the build process, use alternative build tools (like buildx, Podman), or add custom logic
+  - The script receives all necessary environment variables: `BUILD_CONTEXT`, `DOCKERFILE_FULL_PATH`, `IMAGE_TAG`, `IMAGE_BRANCH`, `IMAGE_LATEST`, `BRANCH`, `BRANCH_SAFE`, `DOCKER_IMAGE_NAME`, `GIT_COMMIT_HASH`, `GIT_COMMIT_SHORT`, `GIT_BRANCH_NAME`, `GIT_REPO_URL`, `BUILD_TIMESTAMP`, `REPO_DIR`
+  - The script should exit with status 0 on success, non-zero on failure
+  - Example: `/app/scripts/custom-build.sh`
+  - See `scripts/build.sh.example` for examples
 - `POST_BUILD_SCRIPT` - Path to a script to run after successful build (optional)
   - The script runs in detached mode, so long-running processes like `docker compose up -d` won't block
   - Available environment variables in the script: `IMAGE_TAG`, `IMAGE_BRANCH`, `IMAGE_LATEST`, `BRANCH`, `DOCKER_IMAGE_NAME`, `REPO_DIR`
@@ -304,6 +310,72 @@ Run multiple syno-builder containers, one for each repository:
 docker run -d --name syno-builder-repo1 --env-file .env.repo1 -v /var/run/docker.sock:/var/run/docker.sock syno-builder
 docker run -d --name syno-builder-repo2 --env-file .env.repo2 -v /var/run/docker.sock:/var/run/docker.sock syno-builder
 ```
+
+### Custom Build Script
+
+You can replace the default `docker build` command with a custom build script by setting the `BUILD_SCRIPT` environment variable. This is useful for:
+- Using alternative build tools (e.g., docker buildx for multi-platform builds, Podman)
+- Adding custom pre-build or post-build processing
+- Implementing custom build logic or optimization
+- Using additional build arguments or flags
+
+```bash
+# Create your custom build script
+cat > /path/to/custom-build.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "Custom build: Building Docker image"
+echo "Image tag: $IMAGE_TAG"
+
+# Example: Using docker buildx for multi-platform builds
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
+    --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
+    -t "$IMAGE_TAG" \
+    -t "$IMAGE_BRANCH" \
+    "$BUILD_CONTEXT"
+
+# Tag as latest for main/master branch
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+    docker tag "$IMAGE_TAG" "$IMAGE_LATEST"
+fi
+
+echo "Custom build completed"
+EOF
+
+chmod +x /path/to/custom-build.sh
+
+# Mount and configure the script
+docker run -d \
+  --name syno-builder \
+  -e GIT_REPO=https://github.com/user/repo.git \
+  -e BUILD_SCRIPT=/app/custom/custom-build.sh \
+  -v /path/to/custom-build.sh:/app/custom/custom-build.sh:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v syno-builder-state:/app/state \
+  --restart unless-stopped \
+  ghcr.io/wuhao5/syno-builder:latest
+```
+
+See `scripts/build.sh.example` for more examples of custom build scripts.
+
+**Available environment variables in custom build script:**
+- `BUILD_CONTEXT` - Path to the build context directory
+- `DOCKERFILE_FULL_PATH` - Full path to the Dockerfile
+- `IMAGE_TAG` - Timestamped image tag (e.g., `myapp:main-20240127-143000`)
+- `IMAGE_BRANCH` - Branch image tag (e.g., `myapp:main`)
+- `IMAGE_LATEST` - Latest tag (only for main/master branch)
+- `BRANCH` - Git branch name
+- `BRANCH_SAFE` - Git branch with slashes replaced by dashes
+- `DOCKER_IMAGE_NAME` - Base image name
+- `GIT_COMMIT_HASH` - Full git commit hash
+- `GIT_COMMIT_SHORT` - Short git commit hash (7 chars)
+- `GIT_BRANCH_NAME` - Git branch name
+- `GIT_REPO_URL` - Git repository URL
+- `BUILD_TIMESTAMP` - Build timestamp (YYYYMMDD-HHMMSS)
+- `REPO_DIR` - Path to the cloned repository
 
 ### Post-Build Script
 

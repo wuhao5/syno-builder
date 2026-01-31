@@ -17,12 +17,16 @@ DOCKERFILE_PATH="${DOCKERFILE_PATH:-.}"
 DOCKER_IMAGE_NAME="${DOCKER_IMAGE_NAME:-auto-built-image}"
 GIT_PAT_FILE="${GIT_PAT_FILE:-/app/secrets/pat}"
 POST_BUILD_SCRIPT="${POST_BUILD_SCRIPT:-}"
+BUILD_SCRIPT="${BUILD_SCRIPT:-}"
 STATE_DIR="/app/state"
 
 echo "Git Repository: $GIT_REPO"
 echo "Git Branch(es): $GIT_BRANCH"
 echo "Dockerfile Path: $DOCKERFILE_PATH"
 echo "Docker Image Name: $DOCKER_IMAGE_NAME"
+if [ -n "$BUILD_SCRIPT" ]; then
+    echo "Build script: $BUILD_SCRIPT"
+fi
 if [ -n "$POST_BUILD_SCRIPT" ]; then
     echo "Post-build script: $POST_BUILD_SCRIPT"
 fi
@@ -170,31 +174,63 @@ for BRANCH in "${BRANCHES[@]}"; do
         done
     fi
     
-    # Build docker image with build args and secrets
-    # Enable BuildKit for secret support
-    DOCKER_BUILDKIT=1 docker build \
-        --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
-        --build-arg GIT_COMMIT_SHORT="$GIT_COMMIT_SHORT" \
-        --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
-        --build-arg GIT_REPO="$GIT_REPO_URL" \
-        --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
-        "${SECRET_ARGS[@]}" \
-        -t "$IMAGE_TAG" \
-        -t "$IMAGE_BRANCH" \
-        "$BUILD_CONTEXT"
+    # Export variables for custom build script
+    export BUILD_CONTEXT DOCKERFILE_FULL_PATH IMAGE_TAG IMAGE_BRANCH IMAGE_LATEST
+    export BRANCH BRANCH_SAFE DOCKER_IMAGE_NAME GIT_COMMIT_HASH GIT_COMMIT_SHORT
+    export GIT_BRANCH_NAME GIT_REPO_URL BUILD_TIMESTAMP REPO_DIR
     
-    BUILD_STATUS=$?
+    # Check if custom build script is configured
+    if [ -n "$BUILD_SCRIPT" ] && [ -f "$BUILD_SCRIPT" ]; then
+        echo "Using custom build script: $BUILD_SCRIPT"
+        
+        # Make script executable if not already
+        if ! chmod +x "$BUILD_SCRIPT" 2>/dev/null; then
+            echo "WARNING: Could not make build script executable (may already be executable or permission denied)"
+        fi
+        
+        # Execute custom build script
+        "$BUILD_SCRIPT"
+        BUILD_STATUS=$?
+    elif [ -n "$BUILD_SCRIPT" ] && [ ! -f "$BUILD_SCRIPT" ]; then
+        echo "ERROR: BUILD_SCRIPT is set but file not found: $BUILD_SCRIPT"
+        BUILD_STATUS=1
+    else
+        # Default docker build behavior
+        echo "Using default docker build command"
+        # Build docker image with build args and secrets
+        # Enable BuildKit for secret support
+        DOCKER_BUILDKIT=1 docker build \
+            --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
+            --build-arg GIT_COMMIT_SHORT="$GIT_COMMIT_SHORT" \
+            --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
+            --build-arg GIT_REPO="$GIT_REPO_URL" \
+            --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
+            "${SECRET_ARGS[@]}" \
+            -t "$IMAGE_TAG" \
+            -t "$IMAGE_BRANCH" \
+            "$BUILD_CONTEXT"
+        
+        BUILD_STATUS=$?
+    fi
     
     if [ $BUILD_STATUS -eq 0 ]; then
-        echo "Docker build successful!"
+        echo "Build successful!"
         echo "Tagged as: $IMAGE_TAG"
         echo "Tagged as: $IMAGE_BRANCH"
         
-        # Tag as latest only for main/master branch
+        # Tag as latest only for main/master branch (if not using custom build script)
+        # Custom build scripts should handle their own tagging if needed
         if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
             IMAGE_LATEST="${DOCKER_IMAGE_NAME}:latest"
-            docker tag "$IMAGE_TAG" "$IMAGE_LATEST"
-            echo "Tagged as: $IMAGE_LATEST"
+            if [ -z "$BUILD_SCRIPT" ]; then
+                # Only tag as latest for default builds
+                docker tag "$IMAGE_TAG" "$IMAGE_LATEST"
+                echo "Tagged as: $IMAGE_LATEST"
+            else
+                # For custom build scripts, the latest tag might already be set by the script
+                # Just set the variable for the post-build script
+                echo "Latest tag (if created by build script): $IMAGE_LATEST"
+            fi
         fi
         
         # Run post-build script if configured

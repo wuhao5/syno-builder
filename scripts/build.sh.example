@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Example custom build script
+# This script can be used to replace the default docker build command
+# Set BUILD_SCRIPT environment variable to use a custom build script
+
+# Available environment variables passed from check-and-build.sh:
+# - BUILD_CONTEXT: Path to the directory containing the Dockerfile
+# - DOCKERFILE_FULL_PATH: Full path to the Dockerfile
+# - IMAGE_TAG: The timestamped image tag (e.g., myapp:main-20240127-143000)
+# - IMAGE_BRANCH: The branch image tag (e.g., myapp:main)
+# - IMAGE_LATEST: The latest image tag (only for main/master branch)
+# - BRANCH: The git branch being built
+# - BRANCH_SAFE: The git branch with slashes converted to dashes
+# - DOCKER_IMAGE_NAME: Base image name
+# - GIT_COMMIT_HASH: Full git commit hash
+# - GIT_COMMIT_SHORT: Short git commit hash (7 chars)
+# - GIT_BRANCH_NAME: Git branch name
+# - GIT_REPO_URL: Git repository URL
+# - BUILD_TIMESTAMP: Build timestamp (YYYYMMDD-HHMMSS)
+# - REPO_DIR: Path to the cloned repository
+# - SECRET_ARGS: Array of secret arguments for docker build (if using BuildKit secrets)
+
+set -e
+
+echo "Custom build script: Building Docker image"
+echo "Context: $BUILD_CONTEXT"
+echo "Image tag: $IMAGE_TAG"
+echo "Branch: $BRANCH"
+
+# Example 1: Standard docker build (equivalent to default behavior)
+DOCKER_BUILDKIT=1 docker build \
+    --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
+    --build-arg GIT_COMMIT_SHORT="$GIT_COMMIT_SHORT" \
+    --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
+    --build-arg GIT_REPO="$GIT_REPO_URL" \
+    --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
+    -t "$IMAGE_TAG" \
+    -t "$IMAGE_BRANCH" \
+    "$BUILD_CONTEXT"
+
+# Example 2: Docker build with additional custom build args
+# DOCKER_BUILDKIT=1 docker build \
+#     --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
+#     --build-arg GIT_COMMIT_SHORT="$GIT_COMMIT_SHORT" \
+#     --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
+#     --build-arg GIT_REPO="$GIT_REPO_URL" \
+#     --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
+#     --build-arg CUSTOM_ARG="custom-value" \
+#     --build-arg ANOTHER_ARG="another-value" \
+#     -t "$IMAGE_TAG" \
+#     -t "$IMAGE_BRANCH" \
+#     "$BUILD_CONTEXT"
+
+# Example 3: Docker buildx for multi-platform builds
+# docker buildx build \
+#     --platform linux/amd64,linux/arm64 \
+#     --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
+#     --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
+#     -t "$IMAGE_TAG" \
+#     -t "$IMAGE_BRANCH" \
+#     "$BUILD_CONTEXT"
+
+# Example 4: Custom build with pre-processing
+# echo "Running pre-build processing..."
+# # Run custom pre-build steps
+# cd "$BUILD_CONTEXT"
+# npm run pre-build || true
+#
+# DOCKER_BUILDKIT=1 docker build \
+#     --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
+#     -t "$IMAGE_TAG" \
+#     -t "$IMAGE_BRANCH" \
+#     "$BUILD_CONTEXT"
+
+# Example 5: Alternative build tool (e.g., Podman)
+# podman build \
+#     --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
+#     -t "$IMAGE_TAG" \
+#     -t "$IMAGE_BRANCH" \
+#     "$BUILD_CONTEXT"
+
+# Tag as latest for main/master branch (this should be done by the script if needed)
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+    docker tag "$IMAGE_TAG" "$IMAGE_LATEST"
+    echo "Tagged as latest: $IMAGE_LATEST"
+fi
+
+echo "Custom build completed successfully"
+exit 0
