@@ -183,10 +183,8 @@ for BRANCH in "${BRANCHES[@]}"; do
     if [ -n "$BUILD_SCRIPT" ] && [ -f "$BUILD_SCRIPT" ]; then
         echo "Using custom build script: $BUILD_SCRIPT"
         
-        # Make script executable if not already
-        if ! chmod +x "$BUILD_SCRIPT" 2>/dev/null; then
-            echo "WARNING: Could not make build script executable (may already be executable or permission denied)"
-        fi
+        # Make script executable if not already (may fail on read-only mounts, which is OK)
+        chmod +x "$BUILD_SCRIPT" 2>/dev/null || true
         
         # Execute custom build script
         "$BUILD_SCRIPT"

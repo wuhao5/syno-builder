@@ -18,7 +18,6 @@
 # - GIT_REPO_URL: Git repository URL
 # - BUILD_TIMESTAMP: Build timestamp (YYYYMMDD-HHMMSS)
 # - REPO_DIR: Path to the cloned repository
-# - SECRET_ARGS: Array of secret arguments for docker build (if using BuildKit secrets)
 
 set -e
 
@@ -80,6 +79,8 @@ DOCKER_BUILDKIT=1 docker build \
 #     "$BUILD_CONTEXT"
 
 # Tag as latest for main/master branch (this should be done by the script if needed)
+# Note: The main check-and-build.sh script will not automatically tag as latest
+# when using a custom build script. Custom scripts are responsible for their own tagging.
 if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
     docker tag "$IMAGE_TAG" "$IMAGE_LATEST"
     echo "Tagged as latest: $IMAGE_LATEST"

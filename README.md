@@ -361,6 +361,11 @@ docker run -d \
 
 See `scripts/build.sh.example` for more examples of custom build scripts.
 
+**Important Notes:**
+- Custom build scripts are responsible for their own image tagging, including the `latest` tag for main/master branches
+- The script should exit with status code 0 on success, non-zero on failure
+- Make sure your custom build script is executable (`chmod +x`) before mounting it
+
 **Available environment variables in custom build script:**
 - `BUILD_CONTEXT` - Path to the build context directory
 - `DOCKERFILE_FULL_PATH` - Full path to the Dockerfile
