@@ -6,7 +6,7 @@
 # Available environment variables passed from check-and-build.sh:
 # - BUILD_CONTEXT: Path to the directory containing the Dockerfile
 # - DOCKERFILE_FULL_PATH: Full path to the Dockerfile
-# - IMAGE_TAG: The timestamped image tag (e.g., myapp:main-20240127-143000)
+# - IMAGE_TAG: The image tag with git commit hash (e.g., myapp:main-abc1234) or custom tag if IMAGE_TAG env var is provided
 # - IMAGE_BRANCH: The branch image tag (e.g., myapp:main)
 # - IMAGE_LATEST: The latest image tag (only for main/master branch)
 # - BRANCH: The git branch being built

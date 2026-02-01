@@ -18,6 +18,7 @@ DOCKER_IMAGE_NAME="${DOCKER_IMAGE_NAME:-auto-built-image}"
 GIT_PAT_FILE="${GIT_PAT_FILE:-/app/secrets/pat}"
 POST_BUILD_SCRIPT="${POST_BUILD_SCRIPT:-}"
 BUILD_SCRIPT="${BUILD_SCRIPT:-}"
+SHOULD_TAG_EACH_BUILD="${SHOULD_TAG_EACH_BUILD:-false}"
 STATE_DIR="/app/state"
 
 echo "Git Repository: $GIT_REPO"
@@ -140,18 +141,37 @@ for BRANCH in "${BRANCHES[@]}"; do
     BUILD_CONTEXT="$REPO_DIR/$DOCKERFILE_PATH"
     echo "Building Docker image from $BUILD_CONTEXT..."
     
-    # Build with timestamp and branch tag
-    TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-    BRANCH_SAFE=$(echo "$BRANCH" | tr '/' '-')
-    IMAGE_TAG="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}-${TIMESTAMP}"
-    IMAGE_BRANCH="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}"
-    
     # Populate git environment variables for docker build
     GIT_COMMIT_HASH="$CURRENT_COMMIT"
     GIT_COMMIT_SHORT=$(echo "$CURRENT_COMMIT" | cut -c1-7)
     GIT_BRANCH_NAME="$BRANCH"
     GIT_REPO_URL="$GIT_REPO"
+    
+    # Build with timestamp and branch tag
+    TIMESTAMP=$(date +%Y%m%d-%H%M%S)
     BUILD_TIMESTAMP="$TIMESTAMP"
+    BRANCH_SAFE=$(echo "$BRANCH" | tr '/' '-')
+    
+    # Set IMAGE_TAG if not already provided as environment variable
+    # Only generate if SHOULD_TAG_EACH_BUILD is enabled
+    # Default format: branch-git-hash-7chars (e.g., main-abc1234)
+    if [ -z "$IMAGE_TAG" ] && [ "$SHOULD_TAG_EACH_BUILD" = "true" ]; then
+        IMAGE_TAG="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}-${GIT_COMMIT_SHORT}"
+        echo "Generated IMAGE_TAG: $IMAGE_TAG"
+    elif [ -n "$IMAGE_TAG" ]; then
+        # Validate provided IMAGE_TAG to prevent injection attacks
+        # Docker tags should contain only: alphanumeric, dots, hyphens, underscores, colons, and slashes
+        if [[ ! "$IMAGE_TAG" =~ ^[a-zA-Z0-9._:/-]+$ ]]; then
+            echo "ERROR: Invalid IMAGE_TAG format. Only alphanumeric characters, dots, hyphens, underscores, colons, and slashes are allowed."
+            echo "Provided IMAGE_TAG: $IMAGE_TAG"
+            exit 1
+        fi
+        echo "Using provided IMAGE_TAG: $IMAGE_TAG"
+    else
+        echo "IMAGE_TAG generation disabled (SHOULD_TAG_EACH_BUILD=${SHOULD_TAG_EACH_BUILD})"
+    fi
+    
+    IMAGE_BRANCH="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}"
     
     # Handle Docker build secrets - make secrets available during build
     # Build secret mount arguments for each file in the secrets directory
@@ -195,6 +215,14 @@ for BRANCH in "${BRANCHES[@]}"; do
     else
         # Default docker build behavior
         echo "Using default docker build command"
+        
+        # Build tag arguments conditionally
+        TAG_ARGS=()
+        if [ -n "$IMAGE_TAG" ]; then
+            TAG_ARGS+=(-t "$IMAGE_TAG")
+        fi
+        TAG_ARGS+=(-t "$IMAGE_BRANCH")
+        
         # Build docker image with build args and secrets
         # Enable BuildKit for secret support
         DOCKER_BUILDKIT=1 docker build \
@@ -204,8 +232,7 @@ for BRANCH in "${BRANCHES[@]}"; do
             --build-arg GIT_REPO="$GIT_REPO_URL" \
             --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
             "${SECRET_ARGS[@]}" \
-            -t "$IMAGE_TAG" \
-            -t "$IMAGE_BRANCH" \
+            "${TAG_ARGS[@]}" \
             "$BUILD_CONTEXT"
         
         BUILD_STATUS=$?
@@ -213,7 +240,9 @@ for BRANCH in "${BRANCHES[@]}"; do
     
     if [ $BUILD_STATUS -eq 0 ]; then
         echo "Build successful!"
-        echo "Tagged as: $IMAGE_TAG"
+        if [ -n "$IMAGE_TAG" ]; then
+            echo "Tagged as: $IMAGE_TAG"
+        fi
         echo "Tagged as: $IMAGE_BRANCH"
         
         # Tag as latest only for main/master branch (if not using custom build script)
