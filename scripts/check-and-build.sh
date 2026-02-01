@@ -140,18 +140,27 @@ for BRANCH in "${BRANCHES[@]}"; do
     BUILD_CONTEXT="$REPO_DIR/$DOCKERFILE_PATH"
     echo "Building Docker image from $BUILD_CONTEXT..."
     
-    # Build with timestamp and branch tag
-    TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-    BRANCH_SAFE=$(echo "$BRANCH" | tr '/' '-')
-    IMAGE_TAG="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}-${TIMESTAMP}"
-    IMAGE_BRANCH="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}"
-    
     # Populate git environment variables for docker build
     GIT_COMMIT_HASH="$CURRENT_COMMIT"
     GIT_COMMIT_SHORT=$(echo "$CURRENT_COMMIT" | cut -c1-7)
     GIT_BRANCH_NAME="$BRANCH"
     GIT_REPO_URL="$GIT_REPO"
+    
+    # Build with timestamp and branch tag
+    TIMESTAMP=$(date +%Y%m%d-%H%M%S)
     BUILD_TIMESTAMP="$TIMESTAMP"
+    BRANCH_SAFE=$(echo "$BRANCH" | tr '/' '-')
+    
+    # Set IMAGE_TAG if not already provided as environment variable
+    # Default format: branch-git-hash-7chars (e.g., main-abc1234)
+    if [ -z "$IMAGE_TAG" ]; then
+        IMAGE_TAG="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}-${GIT_COMMIT_SHORT}"
+        echo "Generated IMAGE_TAG: $IMAGE_TAG"
+    else
+        echo "Using provided IMAGE_TAG: $IMAGE_TAG"
+    fi
+    
+    IMAGE_BRANCH="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}"
     
     # Handle Docker build secrets - make secrets available during build
     # Build secret mount arguments for each file in the secrets directory

@@ -86,6 +86,10 @@ All configuration is done through environment variables:
   - For intervals > 60 minutes, use multiples of 60 (e.g., 120, 180, 240 for 2, 3, 4 hours)
 - `DOCKERFILE_PATH` - Path to the Dockerfile within the repository (default: `.`)
 - `DOCKER_IMAGE_NAME` - Name for the built Docker image (default: `auto-built-image`)
+- `IMAGE_TAG` - Docker image tag (optional)
+  - If not provided, defaults to: `{DOCKER_IMAGE_NAME}:{branch}-{git-hash-7chars}`
+  - Example default: `auto-built-image:main-abc1234`
+  - If provided, uses the custom tag: `IMAGE_TAG=myapp:custom-tag`
 - `BUILD_SCRIPT` - Path to a custom build script that replaces the default docker build command (optional)
   - Use this to customize the build process, use alternative build tools (like buildx, Podman), or add custom logic
   - The script receives all necessary environment variables: `BUILD_CONTEXT`, `DOCKERFILE_FULL_PATH`, `IMAGE_TAG`, `IMAGE_BRANCH`, `IMAGE_LATEST`, `BRANCH`, `BRANCH_SAFE`, `DOCKER_IMAGE_NAME`, `GIT_COMMIT_HASH`, `GIT_COMMIT_SHORT`, `GIT_BRANCH_NAME`, `GIT_REPO_URL`, `BUILD_TIMESTAMP`, `REPO_DIR`
@@ -223,9 +227,10 @@ The token will be automatically used for authentication when cloning and pulling
 3. **Periodic Checks**: A cron job runs at the specified interval to check for new commits on all configured branches
 4. **Automatic Build**: When changes are detected on any branch, Docker builds the image from that branch
 5. **Tagging**: 
-   - Each branch build is tagged with branch name and timestamp (e.g., `myapp:main-20240127-143000`)
+   - By default, each branch build is tagged with branch name and git commit hash (e.g., `myapp:main-abc1234`)
    - Each branch gets a persistent tag (e.g., `myapp:main`, `myapp:develop`)
    - Main/master branch also tagged as `latest`
+   - Custom tags can be provided via the `IMAGE_TAG` environment variable
 
 ## Volume Mounts
 
@@ -369,7 +374,7 @@ See `scripts/build.sh.example` for more examples of custom build scripts.
 **Available environment variables in custom build script:**
 - `BUILD_CONTEXT` - Path to the build context directory
 - `DOCKERFILE_FULL_PATH` - Full path to the Dockerfile
-- `IMAGE_TAG` - Timestamped image tag (e.g., `myapp:main-20240127-143000`)
+- `IMAGE_TAG` - Image tag with git commit hash (e.g., `myapp:main-abc1234`) or custom tag if provided via IMAGE_TAG environment variable
 - `IMAGE_BRANCH` - Branch image tag (e.g., `myapp:main`)
 - `IMAGE_LATEST` - Latest tag (only for main/master branch)
 - `BRANCH` - Git branch name
