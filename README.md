@@ -87,9 +87,13 @@ All configuration is done through environment variables:
 - `DOCKERFILE_PATH` - Path to the Dockerfile within the repository (default: `.`)
 - `DOCKER_IMAGE_NAME` - Name for the built Docker image (default: `auto-built-image`)
 - `IMAGE_TAG` - Docker image tag (optional)
-  - If not provided, defaults to: `{DOCKER_IMAGE_NAME}:{branch}-{git-hash-7chars}`
+  - If not provided, defaults to: `{DOCKER_IMAGE_NAME}:{branch}-{git-hash-7chars}` (only when `SHOULD_TAG_EACH_BUILD=true`)
   - Example default: `auto-built-image:main-abc1234`
   - If provided, uses the custom tag: `IMAGE_TAG=myapp:custom-tag`
+- `SHOULD_TAG_EACH_BUILD` - Enable unique tag for each build (default: `false`)
+  - When `false`: Only tags with `IMAGE_BRANCH` (e.g., `myapp:main`)
+  - When `true`: Also tags with `IMAGE_TAG` containing git hash (e.g., `myapp:main-abc1234`)
+  - Set to `true` if you want to preserve each build with a unique, commit-based tag
 - `BUILD_SCRIPT` - Path to a custom build script that replaces the default docker build command (optional)
   - Use this to customize the build process, use alternative build tools (like buildx, Podman), or add custom logic
   - The script receives all necessary environment variables: `BUILD_CONTEXT`, `DOCKERFILE_FULL_PATH`, `IMAGE_TAG`, `IMAGE_BRANCH`, `IMAGE_LATEST`, `BRANCH`, `BRANCH_SAFE`, `DOCKER_IMAGE_NAME`, `GIT_COMMIT_HASH`, `GIT_COMMIT_SHORT`, `GIT_BRANCH_NAME`, `GIT_REPO_URL`, `BUILD_TIMESTAMP`, `REPO_DIR`
