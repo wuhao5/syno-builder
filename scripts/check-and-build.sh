@@ -157,6 +157,13 @@ for BRANCH in "${BRANCHES[@]}"; do
         IMAGE_TAG="${DOCKER_IMAGE_NAME}:${BRANCH_SAFE}-${GIT_COMMIT_SHORT}"
         echo "Generated IMAGE_TAG: $IMAGE_TAG"
     else
+        # Validate provided IMAGE_TAG to prevent injection attacks
+        # Docker tags should contain only: alphanumeric, dots, hyphens, underscores, colons, and slashes
+        if [[ ! "$IMAGE_TAG" =~ ^[a-zA-Z0-9._:/-]+$ ]]; then
+            echo "ERROR: Invalid IMAGE_TAG format. Only alphanumeric characters, dots, hyphens, underscores, colons, and slashes are allowed."
+            echo "Provided IMAGE_TAG: $IMAGE_TAG"
+            exit 1
+        fi
         echo "Using provided IMAGE_TAG: $IMAGE_TAG"
     fi
     
