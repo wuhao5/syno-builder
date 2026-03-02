@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 echo "==================================="
 echo "Git Change Checker and Docker Builder"
@@ -224,8 +223,7 @@ for BRANCH in "${BRANCHES[@]}"; do
         TAG_ARGS+=(-t "$IMAGE_BRANCH")
         
         # Build docker image with build args and secrets
-        # Enable BuildKit for secret support
-        DOCKER_BUILDKIT=1 docker build \
+        docker buildx build \
             --build-arg GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
             --build-arg GIT_COMMIT_SHORT="$GIT_COMMIT_SHORT" \
             --build-arg GIT_BRANCH="$GIT_BRANCH_NAME" \
@@ -251,7 +249,7 @@ for BRANCH in "${BRANCHES[@]}"; do
             IMAGE_LATEST="${DOCKER_IMAGE_NAME}:latest"
             if [ -z "$BUILD_SCRIPT" ]; then
                 # Only tag as latest for default builds
-                docker tag "$IMAGE_TAG" "$IMAGE_LATEST"
+                docker tag "$IMAGE_BRANCH" "$IMAGE_LATEST"
                 echo "Tagged as: $IMAGE_LATEST"
             else
                 # For custom build scripts, the latest tag might already be set by the script
