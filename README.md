@@ -133,9 +133,13 @@ All configuration is done through environment variables:
 
 ### Repository & Build Options
 
-- `GIT_BRANCH` - Branch(es) to monitor (default: `main`)
+- `GIT_BRANCH` - Branch(es) to monitor (default: `main` when `GIT_TAG_PATTERN` is unset; disabled when `GIT_TAG_PATTERN` is set and `GIT_BRANCH` is omitted or `none`)
   - Single branch: `GIT_BRANCH=main`
   - Multiple branches: `GIT_BRANCH=main,develop,staging` (comma-separated)
+- `GIT_TAG_PATTERN` - Enable tag-triggered builds matching comma-separated glob pattern(s) (optional; e.g., `*`, `v*`, or `v*,release-*`)
+  - Triggers automatically on GitHub `push` (`refs/tags/*`) and `create` (`ref_type=tag`) webhooks, or builds the newest matching tag in `poll`/`both` mode
+  - Tags built images as `{DOCKER_IMAGE_NAME}:{tag}` (e.g., `myapp:v1.2.3`)
+- `TAG_LATEST` - Also update `{DOCKER_IMAGE_NAME}:latest` when building from a Git tag (default: `true`)
 - `GIT_PAT_FILE` - Path to mounted file containing Personal Access Token (default: `/app/secrets/pat`)
 - `GIT_PAT` - Personal Access Token as environment variable (fallback if file doesn't exist)
 - `DOCKERFILE_PATH` - Path to the Dockerfile directory within the repository (default: `.`)
@@ -175,7 +179,8 @@ sudo docker ps --format "table {{.Names}}\t{{.Label \"com.docker.compose.project
 Passed automatically as `--build-arg` to `docker buildx build`:
 - `GIT_COMMIT_HASH` - Full commit hash
 - `GIT_COMMIT_SHORT` - Short commit hash (7 chars)
-- `GIT_BRANCH` - Branch name
+- `GIT_BRANCH` - Branch name (or tag name for tag builds)
+- `GIT_TAG` - Git tag name (passed when building from a tag)
 - `GIT_REPO` - Git repository URL
 - `BUILD_TIMESTAMP` - Build timestamp (`YYYYMMDD-HHMMSS`)
 
@@ -210,6 +215,7 @@ docker exec syno-builder /app/check-and-build.sh
 # Or directly via Node:
 docker exec syno-builder node /app/index.mjs --once
 docker exec syno-builder node /app/index.mjs --once --branch main
+docker exec syno-builder node /app/index.mjs --once --tag v1.2.3
 ```
 
 ## Development

@@ -6,6 +6,8 @@ export type TriggerMode = 'poll' | 'webhook' | 'both';
 export interface Config {
   gitRepo: string;
   gitBranches: string[];
+  gitTagPatterns: string[];
+  tagLatest: boolean;
   gitPat: string;
   gitPatSource: 'file' | 'env' | 'none';
   gitPatFile: string;
@@ -119,6 +121,19 @@ export function parseDockerBuildFlags(raw: string | undefined): string[] {
   );
 }
 
+function globToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const regexBody = escaped.replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${regexBody}$`);
+}
+
+export function matchesTagPattern(tag: string, patterns: string[]): boolean {
+  if (!tag || patterns.length === 0) {
+    return false;
+  }
+  return patterns.some((pattern) => globToRegExp(pattern).test(tag));
+}
+
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
   options: LoadConfigOptions = {},
@@ -128,17 +143,38 @@ export function loadConfig(
     throw new Error('GIT_REPO environment variable is required');
   }
 
-  const rawBranches = env.GIT_BRANCH?.trim() || 'main';
-  const branchSet = new Set<string>();
-  for (const part of rawBranches.split(',')) {
+  const rawTagPatterns = env.GIT_TAG_PATTERN?.trim() ?? '';
+  const tagPatternSet = new Set<string>();
+  for (const part of rawTagPatterns.split(',')) {
     const trimmed = part.trim();
     if (trimmed.length > 0) {
-      branchSet.add(trimmed);
+      tagPatternSet.add(trimmed);
     }
   }
-  const gitBranches = Array.from(branchSet);
-  if (gitBranches.length === 0) {
-    throw new Error('GIT_BRANCH must specify at least one branch');
+  const gitTagPatterns = Array.from(tagPatternSet);
+  const tagLatest = parseBoolean(env.TAG_LATEST, true, 'TAG_LATEST');
+
+  const rawBranchesEnv = env.GIT_BRANCH?.trim();
+  let gitBranches: string[];
+  if (rawBranchesEnv && rawBranchesEnv.toLowerCase() === 'none') {
+    gitBranches = [];
+  } else if (!rawBranchesEnv) {
+    // When GIT_TAG_PATTERN is configured and GIT_BRANCH is omitted, monitor tags only.
+    // Otherwise default to 'main' for backward compatibility.
+    gitBranches = gitTagPatterns.length > 0 ? [] : ['main'];
+  } else {
+    const branchSet = new Set<string>();
+    for (const part of rawBranchesEnv.split(',')) {
+      const trimmed = part.trim();
+      if (trimmed.length > 0) {
+        branchSet.add(trimmed);
+      }
+    }
+    gitBranches = Array.from(branchSet);
+  }
+
+  if (gitBranches.length === 0 && gitTagPatterns.length === 0) {
+    throw new Error('GIT_BRANCH or GIT_TAG_PATTERN must specify at least one branch or tag pattern');
   }
 
   const triggerMode = parseTriggerMode(env.TRIGGER_MODE);
@@ -251,6 +287,8 @@ export function loadConfig(
   return {
     gitRepo,
     gitBranches,
+    gitTagPatterns,
+    tagLatest,
     gitPat: gitPatResult.value,
     gitPatSource: gitPatResult.source,
     gitPatFile,

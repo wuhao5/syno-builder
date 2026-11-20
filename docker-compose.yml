@@ -31,7 +31,9 @@ services:
     environment:
       # These can be overridden in .env file
       - GIT_REPO=${GIT_REPO}
-      - GIT_BRANCH=${GIT_BRANCH:-main}
+      - GIT_BRANCH=${GIT_BRANCH:-}
+      - GIT_TAG_PATTERN=${GIT_TAG_PATTERN:-}
+      - TAG_LATEST=${TAG_LATEST:-true}
       - TRIGGER_MODE=${TRIGGER_MODE:-poll}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-60}
       - WEBHOOK_PORT=${WEBHOOK_PORT:-9000}

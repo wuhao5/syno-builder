@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { Config } from './config.js';
+import { matchesTagPattern, type Config } from './config.js';
 import { normalizeRepoUrl } from './git.js';
 import { logger } from './logger.js';
 
@@ -17,6 +17,7 @@ export interface PushEventMeta {
 export interface WebhookServerOptions {
   config: Config;
   onPush: (branch: string, meta: PushEventMeta) => void;
+  onTag?: (tag: string, meta: PushEventMeta) => void;
   maxBodyBytes?: number;
 }
 
@@ -169,8 +170,9 @@ function getHeader(req: IncomingMessage, name: string): string | undefined {
 export function createWebhookRequestListener(
   options: WebhookServerOptions,
 ): http.RequestListener {
-  const { config, onPush, maxBodyBytes = MAX_WEBHOOK_BODY_BYTES } = options;
+  const { config, onPush, onTag, maxBodyBytes = MAX_WEBHOOK_BODY_BYTES } = options;
   const trackedBranches = new Set(config.gitBranches);
+  const tagBuildsEnabled = config.gitTagPatterns.length > 0;
   const expectedRepo = normalizeRepoUrl(config.gitRepo);
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -253,7 +255,7 @@ export function createWebhookRequestListener(
       return;
     }
 
-    if (event !== 'push') {
+    if (event !== 'push' && event !== 'create') {
       logger.info(
         `Ignoring unsupported GitHub event "${event ?? 'unknown'}" (delivery=${deliveryId ?? 'unknown'})`,
       );
@@ -263,20 +265,103 @@ export function createWebhookRequestListener(
 
     const payload = parseWebhookPayload(rawBody, getHeader(req, 'content-type'));
     if (!payload) {
-      logger.warn(`Rejected malformed push payload (delivery=${deliveryId ?? 'unknown'})`);
+      logger.warn(`Rejected malformed ${event} payload (delivery=${deliveryId ?? 'unknown'})`);
       sendJson(res, 400, { error: 'Invalid JSON payload' });
       return;
     }
 
     if (!matchesExpectedRepo(payload, expectedRepo)) {
       logger.warn(
-        `Ignoring push webhook for mismatched repository (delivery=${deliveryId ?? 'unknown'})`,
+        `Ignoring ${event} webhook for mismatched repository (delivery=${deliveryId ?? 'unknown'})`,
       );
       sendJson(res, 200, { status: 'ignored', reason: 'repository mismatch' });
       return;
     }
 
+    if (event === 'create') {
+      const refType = typeof payload.ref_type === 'string' ? payload.ref_type.toLowerCase() : '';
+      if (refType !== 'tag') {
+        logger.info(
+          `Ignoring GitHub create event for ref_type="${refType || 'unknown'}" (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'unsupported create ref_type' });
+        return;
+      }
+
+      if (!tagBuildsEnabled) {
+        logger.info(
+          `Ignoring tag create event because GIT_TAG_PATTERN is not configured (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'tag builds disabled' });
+        return;
+      }
+
+      const tag = typeof payload.ref === 'string' ? payload.ref.trim() : '';
+      if (!tag || !matchesTagPattern(tag, config.gitTagPatterns)) {
+        logger.info(
+          `Ignoring tag "${tag || 'unknown'}" not matching GIT_TAG_PATTERN (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'unmatched tag' });
+        return;
+      }
+
+      logger.info(
+        `Accepted create webhook for tag "${tag}" (delivery=${deliveryId ?? 'unknown'})`,
+      );
+      onTag?.(tag, { deliveryId });
+
+      sendJson(res, 202, {
+        status: 'queued',
+        tag,
+      });
+      return;
+    }
+
     const ref = typeof payload.ref === 'string' ? payload.ref : '';
+    const after = typeof payload.after === 'string' ? payload.after : undefined;
+    const isDeleted = payload.deleted === true || after === ZERO_SHA;
+
+    if (ref.startsWith('refs/tags/')) {
+      if (!tagBuildsEnabled) {
+        logger.info(
+          `Ignoring non-branch ref "${ref}" (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'non-branch ref' });
+        return;
+      }
+
+      if (isDeleted) {
+        logger.info(
+          `Ignoring tag deletion event for "${ref}" (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'tag deleted' });
+        return;
+      }
+
+      const tag = ref.slice('refs/tags/'.length);
+      if (!tag || !matchesTagPattern(tag, config.gitTagPatterns)) {
+        logger.info(
+          `Ignoring push for unmatched tag "${tag || 'unknown'}" (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'unmatched tag' });
+        return;
+      }
+
+      const commitShort = after ? after.slice(0, 7) : undefined;
+      logger.info(
+        `Accepted push webhook for tag "${tag}"${commitShort ? ` (${commitShort})` : ''} (delivery=${deliveryId ?? 'unknown'})`,
+      );
+
+      onTag?.(tag, { commit: after, deliveryId });
+
+      sendJson(res, 202, {
+        status: 'queued',
+        tag,
+        ...(commitShort ? { commit: commitShort } : {}),
+      });
+      return;
+    }
+
     if (!ref.startsWith('refs/heads/')) {
       logger.info(
         `Ignoring non-branch ref "${ref || 'unknown'}" (delivery=${deliveryId ?? 'unknown'})`,
@@ -285,8 +370,7 @@ export function createWebhookRequestListener(
       return;
     }
 
-    const after = typeof payload.after === 'string' ? payload.after : undefined;
-    if (payload.deleted === true || after === ZERO_SHA) {
+    if (isDeleted) {
       logger.info(
         `Ignoring branch deletion event for "${ref}" (delivery=${deliveryId ?? 'unknown'})`,
       );

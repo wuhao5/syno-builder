@@ -55,12 +55,12 @@ Synology DSM Reverse Proxy (:443 -> 127.0.0.1:9000)
 | :--- | :--- |
 | `src/index.ts` | Entrypoint, CLI (`--once`, `--branch`), mode startup, graceful `SIGTERM`/`SIGINT` shutdown |
 | `src/config.ts` | Environment variable & secret file loading with strict validation |
-| `src/webhook.ts` | `node:http` server (`/webhook`, `/health`), constant-time HMAC-SHA256 verification, payload & repo/branch filtering |
-| `src/queue.ts` | Single-flight `BuildQueue` with duplicate branch coalescing |
-| `src/git.ts` | Repository cloning, explicit refspec fetch/reset, and env-scoped `GIT_CONFIG_*` PAT auth |
-| `src/builder.ts` | BuildKit secret discovery (excluding `pat`/`webhook_secret`), per-branch tagging, `docker buildx build`, custom/post-build scripts |
+| `src/webhook.ts` | `node:http` server (`/webhook`, `/health`), constant-time HMAC-SHA256 verification, branch `push` and tag `push`/`create` filtering |
+| `src/queue.ts` | Single-flight `BuildQueue` with duplicate branch/tag coalescing |
+| `src/git.ts` | Repository cloning, branch & tag fetch/checkout (peeling annotated tags), latest-tag discovery, and env-scoped `GIT_CONFIG_*` PAT auth |
+| `src/builder.ts` | BuildKit secret discovery (excluding `pat`/`webhook_secret`), branch/tag image tagging, `docker buildx build`, optional `docker compose up`, custom/post-build scripts |
 | `src/exec.ts` | Child-process runner with POSIX process-group isolation, `AbortSignal` cancellation, and `SIGTERM` → `SIGKILL` timeout escalation |
-| `src/state.ts` | Atomic commit hash persistence in `/app/state/last_commit_<branch>.txt` |
+| `src/state.ts` | Atomic commit hash persistence in `/app/state/last_commit_<branch>.txt` and `/app/state/last_tag_<tag>.txt` |
 | `src/logger.ts` | Timestamped logging to stdout/stderr (`docker logs`) |
 
 ## Process Lifecycle & Security Considerations

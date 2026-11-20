@@ -19,6 +19,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     gitRepo: 'https://github.com/wuhao5/myapp.git',
     gitBranches: ['main', 'feature/login'],
+    gitTagPatterns: [],
+    tagLatest: true,
     gitPat: '',
     gitPatSource: 'none',
     gitPatFile: '/app/secrets/pat',
@@ -116,6 +118,38 @@ describe('computeBuildMetadata', () => {
     assert.ok(tagIndex > noCacheIndex + 2);
     assert.equal(args[tagIndex + 1], 'myapp:main');
     assert.equal(args[args.length - 1], path.resolve('/app/repo', 'docker'));
+  });
+
+  it('computes Docker tags and build args for Git tag builds without duplicate -t flags', () => {
+    const cfg = makeConfig({ gitTagPatterns: ['v*'], tagLatest: true });
+    const meta = computeBuildMetadata(cfg, 'v1.2.3', 'abcdef1234567890', new Date(), 'tag');
+
+    assert.equal(meta.refType, 'tag');
+    assert.equal(meta.gitTag, 'v1.2.3');
+    assert.equal(meta.imageTag, 'myapp:v1.2.3');
+    assert.equal(meta.imageBranch, 'myapp:v1.2.3');
+    assert.equal(meta.imageLatest, 'myapp:latest');
+
+    const args = buildDockerArgs(cfg, meta, []);
+    assert.ok(args.includes('GIT_TAG=v1.2.3'));
+    const tagFlags = args.filter((arg) => arg === '-t');
+    assert.equal(tagFlags.length, 1);
+    assert.equal(args[args.indexOf('-t') + 1], 'myapp:v1.2.3');
+
+    const noLatestMeta = computeBuildMetadata(
+      makeConfig({ gitTagPatterns: ['v*'], tagLatest: false }),
+      'v1.2.3',
+      'abcdef1234567890',
+      new Date(),
+      'tag',
+    );
+    assert.equal(noLatestMeta.imageLatest, undefined);
+
+    const scriptEnv = createBuildScriptEnv(cfg, meta, {});
+    assert.equal(scriptEnv.GIT_TAG, 'v1.2.3');
+    assert.equal(scriptEnv.GIT_REF_TYPE, 'tag');
+    assert.equal(scriptEnv.IMAGE_TAG, 'myapp:v1.2.3');
+    assert.equal(scriptEnv.IMAGE_LATEST, 'myapp:latest');
   });
 });
 

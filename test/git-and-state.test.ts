@@ -4,7 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { buildGitAuthEnv, normalizeRepoUrl } from '../src/git.js';
-import { getStateFilePath, readLastCommit, sanitizeBranch, writeLastCommit } from '../src/state.js';
+import {
+  getStateFilePath,
+  getTagStateFilePath,
+  readLastCommit,
+  readLastTagCommit,
+  sanitizeBranch,
+  sanitizeDockerTag,
+  writeLastCommit,
+  writeLastTagCommit,
+} from '../src/state.js';
 
 describe('normalizeRepoUrl', () => {
   it('normalizes HTTPS, HTTP, SSH, and SCP git URLs to a canonical value', () => {
@@ -64,6 +73,16 @@ describe('state persistence', () => {
       assert.equal(readLastCommit(tmp, 'feature/webhook-mode'), null);
       writeLastCommit(tmp, 'feature/webhook-mode', 'abcdef1234567890');
       assert.equal(readLastCommit(tmp, 'feature/webhook-mode'), 'abcdef1234567890');
+
+      assert.equal(sanitizeDockerTag('v1.2.3'), 'v1.2.3');
+      assert.equal(sanitizeDockerTag('release/v1.2.3-rc.1'), 'release-v1.2.3-rc.1');
+      assert.equal(
+        getTagStateFilePath(tmp, 'v1.2.3'),
+        path.join(tmp, 'last_tag_v1.2.3.txt'),
+      );
+      assert.equal(readLastTagCommit(tmp, 'v1.2.3'), null);
+      writeLastTagCommit(tmp, 'v1.2.3', '1122334455667788');
+      assert.equal(readLastTagCommit(tmp, 'v1.2.3'), '1122334455667788');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

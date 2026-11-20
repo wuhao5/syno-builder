@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { checkAndBuildBranch } from '../src/builder.js';
+import { checkAndBuildBranch, checkAndBuildLatestTag, checkAndBuildTag } from '../src/builder.js';
 import type { Config } from '../src/config.js';
-import { readLastCommit } from '../src/state.js';
+import { readLastCommit, readLastTagCommit } from '../src/state.js';
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -60,6 +60,8 @@ echo "{\\"branch\\":\\"$BRANCH\\",\\"commit\\":\\"$GIT_COMMIT_HASH\\",\\"tag\\":
       const cfg: Config = {
         gitRepo: originDir,
         gitBranches: ['main'],
+        gitTagPatterns: [],
+        tagLatest: true,
         gitPat: '',
         gitPatSource: 'none',
         gitPatFile: path.join(secretsDir, 'pat'),
@@ -126,6 +128,120 @@ echo "{\\"branch\\":\\"$BRANCH\\",\\"commit\\":\\"$GIT_COMMIT_HASH\\",\\"tag\\":
         tag: `testapp:main-${secondCommit.slice(0, 7)}`,
         latest: 'testapp:latest',
       });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('builds lightweight and annotated Git tags, skips duplicates, and discovers latest matching tag', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'syno-builder-tag-e2e-'));
+    try {
+      const originDir = path.join(tmp, 'origin.git');
+      const workDir = path.join(tmp, 'work');
+      const repoDir = path.join(tmp, 'repo');
+      const stateDir = path.join(tmp, 'state');
+      const secretsDir = path.join(tmp, 'secrets');
+      const buildOutputFile = path.join(tmp, 'tag-builds.jsonl');
+      const buildScriptPath = path.join(tmp, 'custom-build.sh');
+
+      fs.mkdirSync(originDir, { recursive: true });
+      fs.mkdirSync(workDir, { recursive: true });
+      fs.mkdirSync(secretsDir, { recursive: true });
+
+      git(originDir, ['init', '--bare', '--initial-branch=main']);
+      git(workDir, ['init', '--initial-branch=main']);
+      git(workDir, ['remote', 'add', 'origin', originDir]);
+
+      fs.writeFileSync(path.join(workDir, 'Dockerfile'), 'FROM alpine:3.19\n');
+      git(workDir, ['add', 'Dockerfile']);
+      git(workDir, ['commit', '-m', 'v1.0.0 release']);
+      const commit1 = git(workDir, ['rev-parse', 'HEAD']);
+      git(workDir, ['tag', 'v1.0.0']); // lightweight tag
+      git(workDir, ['push', '-u', 'origin', 'main']);
+      git(workDir, ['push', 'origin', 'v1.0.0']);
+
+      fs.writeFileSync(
+        buildScriptPath,
+        `#!/bin/sh
+echo "{\\"refType\\":\\"$GIT_REF_TYPE\\",\\"gitTag\\":\\"$GIT_TAG\\",\\"commit\\":\\"$GIT_COMMIT_HASH\\",\\"imageTag\\":\\"$IMAGE_TAG\\",\\"imageLatest\\":\\"$IMAGE_LATEST\\"}" >> "${buildOutputFile}"
+`,
+        { mode: 0o755 },
+      );
+
+      const cfg: Config = {
+        gitRepo: originDir,
+        gitBranches: [],
+        gitTagPatterns: ['v*'],
+        tagLatest: true,
+        gitPat: '',
+        gitPatSource: 'none',
+        gitPatFile: path.join(secretsDir, 'pat'),
+        triggerMode: 'webhook',
+        runOnStartup: false,
+        checkIntervalMinutes: 60,
+        gitTimeoutMs: 300_000,
+        buildTimeoutMs: 1_800_000,
+        composeTimeoutMs: 300_000,
+        dockerfilePath: '.',
+        dockerImageName: 'testapp',
+        dockerBuildFlags: [],
+        shouldTagEachBuild: false,
+        composeServices: [],
+        buildScript: buildScriptPath,
+        webhookPort: 9000,
+        webhookHost: '127.0.0.1',
+        webhookPath: '/webhook',
+        webhookSecret: 'secret',
+        webhookSecretSource: 'env',
+        webhookSecretFile: path.join(secretsDir, 'webhook_secret'),
+        repoDir,
+        stateDir,
+        secretsDir,
+      };
+
+      // Build lightweight tag v1.0.0
+      assert.equal(await checkAndBuildTag(cfg, 'v1.0.0'), 'built');
+      assert.equal(readLastTagCommit(stateDir, 'v1.0.0'), commit1);
+
+      // Re-running same tag is idempotent
+      assert.equal(await checkAndBuildTag(cfg, 'v1.0.0'), 'unchanged');
+
+      // Create annotated tag v1.1.0 on a new commit + an unmatched tag beta-1
+      fs.writeFileSync(path.join(workDir, 'Dockerfile'), 'FROM alpine:3.20\n');
+      git(workDir, ['add', 'Dockerfile']);
+      git(workDir, ['commit', '-m', 'v1.1.0 release']);
+      const commit2 = git(workDir, ['rev-parse', 'HEAD']);
+      git(workDir, ['tag', '-a', 'v1.1.0', '-m', 'Annotated release v1.1.0']);
+      git(workDir, ['tag', 'beta-1']);
+      git(workDir, ['push', 'origin', 'main', '--tags']);
+
+      // Latest matching tag poll should pick annotated tag v1.1.0 (ignoring beta-1)
+      assert.equal(await checkAndBuildLatestTag(cfg), 'built');
+      assert.equal(readLastTagCommit(stateDir, 'v1.1.0'), commit2);
+      assert.equal(await checkAndBuildLatestTag(cfg), 'unchanged');
+
+      const lines = fs
+        .readFileSync(buildOutputFile, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, string>);
+
+      assert.deepEqual(lines, [
+        {
+          refType: 'tag',
+          gitTag: 'v1.0.0',
+          commit: commit1,
+          imageTag: 'testapp:v1.0.0',
+          imageLatest: 'testapp:latest',
+        },
+        {
+          refType: 'tag',
+          gitTag: 'v1.1.0',
+          commit: commit2,
+          imageTag: 'testapp:v1.1.0',
+          imageLatest: 'testapp:latest',
+        },
+      ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { loadConfig, normalizeWebhookPath, parseDockerBuildFlags } from '../src/config.js';
+import { loadConfig, matchesTagPattern, normalizeWebhookPath, parseDockerBuildFlags } from '../src/config.js';
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'syno-builder-config-'));
@@ -24,6 +24,8 @@ describe('loadConfig', () => {
       assert.equal(cfg.triggerMode, 'poll');
       assert.equal(cfg.runOnStartup, true);
       assert.deepEqual(cfg.gitBranches, ['main']);
+      assert.deepEqual(cfg.gitTagPatterns, []);
+      assert.equal(cfg.tagLatest, true);
       assert.equal(cfg.checkIntervalMinutes, 60);
       assert.equal(cfg.gitTimeoutMs, 300_000);
       assert.equal(cfg.buildTimeoutMs, 1_800_000);
@@ -276,6 +278,69 @@ describe('loadConfig', () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('supports tag-only mode and combined branch + tag mode via GIT_TAG_PATTERN', () => {
+    const tmp = makeTempDir();
+    try {
+      // Tag-only when GIT_BRANCH is omitted
+      const tagOnly = loadConfig({
+        GIT_REPO: 'https://github.com/user/repo.git',
+        GIT_TAG_PATTERN: 'v*, release-*',
+        SECRETS_DIR: tmp,
+      });
+      assert.deepEqual(tagOnly.gitBranches, []);
+      assert.deepEqual(tagOnly.gitTagPatterns, ['v*', 'release-*']);
+      assert.equal(tagOnly.tagLatest, true);
+
+      // Combined branch + tag when both are specified
+      const combined = loadConfig({
+        GIT_REPO: 'https://github.com/user/repo.git',
+        GIT_BRANCH: 'main',
+        GIT_TAG_PATTERN: 'v*',
+        TAG_LATEST: 'false',
+        SECRETS_DIR: tmp,
+      });
+      assert.deepEqual(combined.gitBranches, ['main']);
+      assert.deepEqual(combined.gitTagPatterns, ['v*']);
+      assert.equal(combined.tagLatest, false);
+
+      // Explicit GIT_BRANCH=none disables branches
+      const explicitNone = loadConfig({
+        GIT_REPO: 'https://github.com/user/repo.git',
+        GIT_BRANCH: 'none',
+        GIT_TAG_PATTERN: '*',
+        SECRETS_DIR: tmp,
+      });
+      assert.deepEqual(explicitNone.gitBranches, []);
+      assert.deepEqual(explicitNone.gitTagPatterns, ['*']);
+
+      // Neither branch nor tag pattern fails validation
+      assert.throws(
+        () =>
+          loadConfig({
+            GIT_REPO: 'https://github.com/user/repo.git',
+            GIT_BRANCH: 'none',
+            SECRETS_DIR: tmp,
+          }),
+        /GIT_BRANCH or GIT_TAG_PATTERN/,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('matchesTagPattern', () => {
+  it('matches glob patterns (* and ?) safely', () => {
+    assert.equal(matchesTagPattern('v1.2.3', ['v*']), true);
+    assert.equal(matchesTagPattern('release-2026.1', ['v*', 'release-*']), true);
+    assert.equal(matchesTagPattern('beta-1', ['v*', 'release-*']), false);
+    assert.equal(matchesTagPattern('v1.0', ['v?.?']), true);
+    assert.equal(matchesTagPattern('v10.0', ['v?.?']), false);
+    assert.equal(matchesTagPattern('v1x0', ['v1.0']), false); // literal dot escaped
+    assert.equal(matchesTagPattern('anything', ['*']), true);
+    assert.equal(matchesTagPattern('v1.0.0', []), false);
   });
 });
 

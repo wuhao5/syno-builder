@@ -3,9 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Config } from './config.js';
 import { runCommand } from './exec.js';
-import { syncBranch } from './git.js';
+import { findLatestMatchingTag, syncBranch, syncTag } from './git.js';
 import { logger } from './logger.js';
-import { readLastCommit, sanitizeBranch, writeLastCommit } from './state.js';
+import {
+  readLastCommit,
+  readLastTagCommit,
+  sanitizeBranch,
+  sanitizeDockerTag,
+  writeLastCommit,
+  writeLastTagCommit,
+} from './state.js';
+
+export type BuildRefType = 'branch' | 'tag';
 
 export interface BuildSecret {
   id: string;
@@ -13,6 +22,9 @@ export interface BuildSecret {
 }
 
 export interface BuildMetadata {
+  refType: BuildRefType;
+  refName: string;
+  gitTag?: string;
   branch: string;
   branchSafe: string;
   commitHash: string;
@@ -40,31 +52,42 @@ export function formatBuildTimestamp(date: Date = new Date()): string {
 
 export function computeBuildMetadata(
   config: Config,
-  branch: string,
+  refName: string,
   commitHash: string,
   now: Date = new Date(),
+  refType: BuildRefType = 'branch',
 ): BuildMetadata {
-  const branchSafe = sanitizeBranch(branch);
+  const branchSafe = refType === 'tag' ? sanitizeDockerTag(refName) : sanitizeBranch(refName);
   const commitShort = commitHash.slice(0, 7);
   const buildTimestamp = formatBuildTimestamp(now);
   const buildContext = path.resolve(config.repoDir, config.dockerfilePath);
   const dockerfileFullPath = path.join(buildContext, 'Dockerfile');
+
+  const imageBranch = `${config.dockerImageName}:${branchSafe}`;
 
   let imageTag: string | undefined;
   if (config.imageTag) {
     imageTag = config.imageTag;
   } else if (config.shouldTagEachBuild) {
     imageTag = `${config.dockerImageName}:${branchSafe}-${commitShort}`;
+  } else if (refType === 'tag') {
+    imageTag = imageBranch;
   }
 
-  const imageBranch = `${config.dockerImageName}:${branchSafe}`;
   const imageLatest =
-    branch === 'main' || branch === 'master'
-      ? `${config.dockerImageName}:latest`
-      : undefined;
+    refType === 'tag'
+      ? config.tagLatest
+        ? `${config.dockerImageName}:latest`
+        : undefined
+      : refName === 'main' || refName === 'master'
+        ? `${config.dockerImageName}:latest`
+        : undefined;
 
   return {
-    branch,
+    refType,
+    refName,
+    gitTag: refType === 'tag' ? refName : undefined,
+    branch: refName,
     branchSafe,
     commitHash,
     commitShort,
@@ -135,6 +158,8 @@ export function createBuildScriptEnv(
     GIT_COMMIT_HASH: metadata.commitHash,
     GIT_COMMIT_SHORT: metadata.commitShort,
     GIT_BRANCH_NAME: metadata.branch,
+    GIT_TAG: metadata.gitTag ?? '',
+    GIT_REF_TYPE: metadata.refType,
     GIT_REPO_URL: config.gitRepo,
     BUILD_TIMESTAMP: metadata.buildTimestamp,
     REPO_DIR: config.repoDir,
@@ -165,6 +190,7 @@ export function buildDockerArgs(
     `GIT_COMMIT_SHORT=${metadata.commitShort}`,
     '--build-arg',
     `GIT_BRANCH=${metadata.branch}`,
+    ...(metadata.gitTag ? ['--build-arg', `GIT_TAG=${metadata.gitTag}`] : []),
     '--build-arg',
     `GIT_REPO=${config.gitRepo}`,
     '--build-arg',
@@ -179,10 +205,14 @@ export function buildDockerArgs(
     args.push(...config.dockerBuildFlags);
   }
 
+  const tags = new Set<string>();
   if (metadata.imageTag) {
-    args.push('-t', metadata.imageTag);
+    tags.add(metadata.imageTag);
   }
-  args.push('-t', metadata.imageBranch);
+  tags.add(metadata.imageBranch);
+  for (const tag of tags) {
+    args.push('-t', tag);
+  }
   args.push(metadata.buildContext);
 
   return args;
@@ -236,12 +266,16 @@ function launchPostBuildScript(
   }
 }
 
-export function shouldDeployCompose(config: Config, branch: string): boolean {
+export function shouldDeployCompose(
+  config: Config,
+  refName: string,
+  refType: BuildRefType = 'branch',
+): boolean {
   if (!config.composeProjectDir) {
     return false;
   }
-  if (config.composeBranch && config.composeBranch !== branch) {
-    return false;
+  if (config.composeBranch) {
+    return refType === 'branch' && config.composeBranch === refName;
   }
   return true;
 }
@@ -313,11 +347,13 @@ export async function deployComposeProject(
 
 export async function buildDockerImage(
   config: Config,
-  branch: string,
+  refName: string,
   commitHash: string,
   signal?: AbortSignal,
+  refType: BuildRefType = 'branch',
 ): Promise<boolean> {
-  const metadata = computeBuildMetadata(config, branch, commitHash);
+  const refLabel = `${refType} "${refName}"`;
+  const metadata = computeBuildMetadata(config, refName, commitHash, new Date(), refType);
 
   if (!fs.existsSync(metadata.buildContext)) {
     logger.error(`Build context directory not found at ${metadata.buildContext}`);
@@ -331,7 +367,7 @@ export async function buildDockerImage(
     return false;
   }
 
-  logger.info(`Building Docker image from ${metadata.buildContext}...`);
+  logger.info(`Building Docker image for ${refLabel} from ${metadata.buildContext}...`);
   if (metadata.imageTag) {
     logger.info(`Image tag: ${metadata.imageTag}`);
   } else {
@@ -378,24 +414,24 @@ export async function buildDockerImage(
   }
 
   if (buildResult.aborted) {
-    logger.warn(`Docker build aborted for branch "${branch}" due to shutdown.`);
+    logger.warn(`Docker build aborted for ${refLabel} due to shutdown.`);
     return false;
   }
 
   if (buildResult.timedOut) {
     logger.error(
-      `Docker build timed out for branch "${branch}" after ${Math.round(config.buildTimeoutMs / 1000)}s.`,
+      `Docker build timed out for ${refLabel} after ${Math.round(config.buildTimeoutMs / 1000)}s.`,
     );
     return false;
   }
 
   if (buildResult.exitCode !== 0) {
-    logger.error(`Docker build failed for branch "${branch}" (exit code: ${buildResult.exitCode})`);
+    logger.error(`Docker build failed for ${refLabel} (exit code: ${buildResult.exitCode})`);
     return false;
   }
 
-  logger.info(`Build successful for branch "${branch}"!`);
-  if (metadata.imageTag) {
+  logger.info(`Build successful for ${refLabel}!`);
+  if (metadata.imageTag && metadata.imageTag !== metadata.imageBranch) {
     logger.info(`Tagged as: ${metadata.imageTag}`);
   }
   logger.info(`Tagged as: ${metadata.imageBranch}`);
@@ -418,23 +454,23 @@ export async function buildDockerImage(
   }
 
   if (signal?.aborted) {
-    logger.warn(`Skipping post-build actions for branch "${branch}" due to shutdown.`);
+    logger.warn(`Skipping post-build actions for ${refLabel} due to shutdown.`);
     return false;
   }
 
-  if (shouldDeployCompose(config, branch)) {
-    const deployed = await deployComposeProject(config, branch, signal);
+  if (shouldDeployCompose(config, refName, refType)) {
+    const deployed = await deployComposeProject(config, refName, signal);
     if (!deployed) {
       return false;
     }
   } else if (config.composeProjectDir && config.composeBranch) {
     logger.info(
-      `Skipping Docker Compose redeploy for branch "${branch}" (COMPOSE_BRANCH=${config.composeBranch})`,
+      `Skipping Docker Compose redeploy for ${refLabel} (COMPOSE_BRANCH=${config.composeBranch})`,
     );
   }
 
   if (signal?.aborted) {
-    logger.warn(`Skipping post-build script for branch "${branch}" due to shutdown.`);
+    logger.warn(`Skipping post-build script for ${refLabel} due to shutdown.`);
     return false;
   }
 
@@ -505,4 +541,99 @@ export async function checkAndBuildBranch(
     );
     return 'failed';
   }
+}
+
+export async function checkAndBuildTag(
+  config: Config,
+  tag: string,
+  signal?: AbortSignal,
+): Promise<BranchBuildOutcome> {
+  if (signal?.aborted) {
+    return 'aborted';
+  }
+
+  logger.info(`--- Processing tag: ${tag} ---`);
+
+  let currentCommit: string;
+  try {
+    currentCommit = await syncTag(config, tag, signal);
+  } catch (err) {
+    if (signal?.aborted) {
+      logger.warn(`Git sync aborted for tag "${tag}" due to shutdown.`);
+      return 'aborted';
+    }
+    logger.error(
+      `Git sync failed for tag "${tag}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 'failed';
+  }
+
+  logger.info(`Commit for tag "${tag}": ${currentCommit}`);
+
+  const lastCommit = readLastTagCommit(config.stateDir, tag);
+  if (lastCommit) {
+    logger.info(`Last processed commit for tag "${tag}": ${lastCommit}`);
+    if (currentCommit === lastCommit) {
+      logger.info(`Tag "${tag}" already built for commit ${currentCommit}. Skipping build.`);
+      return 'unchanged';
+    }
+  } else {
+    logger.info(`New tag "${tag}" — no previous build recorded.`);
+  }
+
+  logger.info(`Building tag "${tag}"...`);
+
+  try {
+    const success = await buildDockerImage(config, tag, currentCommit, signal, 'tag');
+    if (signal?.aborted) {
+      return 'aborted';
+    }
+    if (!success) {
+      return 'failed';
+    }
+    writeLastTagCommit(config.stateDir, tag, currentCommit);
+    logger.info(`Saved commit ${currentCommit} to state for tag "${tag}".`);
+    return 'built';
+  } catch (err) {
+    if (signal?.aborted) {
+      return 'aborted';
+    }
+    logger.error(
+      `Unexpected error building tag "${tag}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 'failed';
+  }
+}
+
+export async function checkAndBuildLatestTag(
+  config: Config,
+  signal?: AbortSignal,
+): Promise<BranchBuildOutcome> {
+  if (signal?.aborted) {
+    return 'aborted';
+  }
+
+  let latestTag: string | null;
+  try {
+    latestTag = await findLatestMatchingTag(config, signal);
+  } catch (err) {
+    if (signal?.aborted) {
+      logger.warn('Tag discovery aborted due to shutdown.');
+      return 'aborted';
+    }
+    logger.error(
+      `Failed to discover latest matching tag: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 'failed';
+  }
+
+  if (!latestTag) {
+    logger.info(
+      `No tags matching pattern(s) [${config.gitTagPatterns.join(', ')}] found on origin.`,
+    );
+    return 'unchanged';
+  }
+
+  logger.info(`Latest matching tag on origin: ${latestTag}`);
+  return checkAndBuildTag(config, latestTag, signal);
 }

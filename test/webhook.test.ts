@@ -17,6 +17,8 @@ function makeTestConfig(overrides: Partial<Config> = {}): Config {
   return {
     gitRepo: 'https://github.com/wuhao5/myapp.git',
     gitBranches: ['main', 'develop'],
+    gitTagPatterns: [],
+    tagLatest: true,
     gitPat: '',
     gitPatSource: 'none',
     gitPatFile: '/app/secrets/pat',
@@ -265,6 +267,144 @@ describe('webhook HTTP server', () => {
 
       // Only the single valid push should have fired onPush
       assert.equal(received.length, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('triggers onTag for push (refs/tags/*) and create (ref_type=tag) events matching GIT_TAG_PATTERN', async () => {
+    const receivedTags: Array<{ tag: string; commit?: string }> = [];
+    const cfg = makeTestConfig({
+      gitBranches: [],
+      gitTagPatterns: ['v*'],
+    });
+    const server = await startWebhookServer({
+      config: cfg,
+      onPush() {
+        assert.fail('onPush should not be called in tag-only mode');
+      },
+      onTag(tag, meta) {
+        receivedTags.push({ tag, commit: meta.commit });
+      },
+    });
+
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+
+    try {
+      // 202 push event for matching tag
+      const tagPushBody = JSON.stringify({
+        ref: 'refs/tags/v1.2.3',
+        after: '1122334455667788990011223344556677889900',
+        deleted: false,
+        repository: { clone_url: 'https://github.com/wuhao5/myapp.git' },
+      });
+      const tagPushRes = await fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-GitHub-Event': 'push',
+          'X-GitHub-Delivery': 'tag-push-1',
+          'X-Hub-Signature-256': sign(cfg.webhookSecret, tagPushBody),
+        },
+        body: tagPushBody,
+      });
+      assert.equal(tagPushRes.status, 202);
+      assert.deepEqual(await tagPushRes.json(), {
+        status: 'queued',
+        tag: 'v1.2.3',
+        commit: '1122334',
+      });
+
+      // 202 create event for matching tag
+      const tagCreateBody = JSON.stringify({
+        ref: 'v2.0.0',
+        ref_type: 'tag',
+        repository: { clone_url: 'https://github.com/wuhao5/myapp.git' },
+      });
+      const tagCreateRes = await fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-GitHub-Event': 'create',
+          'X-GitHub-Delivery': 'tag-create-1',
+          'X-Hub-Signature-256': sign(cfg.webhookSecret, tagCreateBody),
+        },
+        body: tagCreateBody,
+      });
+      assert.equal(tagCreateRes.status, 202);
+      assert.deepEqual(await tagCreateRes.json(), {
+        status: 'queued',
+        tag: 'v2.0.0',
+      });
+
+      // 200 ignored: unmatched tag
+      const unmatchedBody = JSON.stringify({
+        ref: 'refs/tags/beta-1',
+        after: '1122334455667788990011223344556677889900',
+        repository: { clone_url: 'https://github.com/wuhao5/myapp.git' },
+      });
+      const unmatchedRes = await fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-GitHub-Event': 'push',
+          'X-Hub-Signature-256': sign(cfg.webhookSecret, unmatchedBody),
+        },
+        body: unmatchedBody,
+      });
+      assert.equal(unmatchedRes.status, 200);
+      assert.deepEqual(await unmatchedRes.json(), {
+        status: 'ignored',
+        reason: 'unmatched tag',
+      });
+
+      // 200 ignored: tag deleted
+      const deletedTagBody = JSON.stringify({
+        ref: 'refs/tags/v1.2.3',
+        after: '0000000000000000000000000000000000000000',
+        deleted: true,
+        repository: { clone_url: 'https://github.com/wuhao5/myapp.git' },
+      });
+      const deletedTagRes = await fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-GitHub-Event': 'push',
+          'X-Hub-Signature-256': sign(cfg.webhookSecret, deletedTagBody),
+        },
+        body: deletedTagBody,
+      });
+      assert.equal(deletedTagRes.status, 200);
+      assert.deepEqual(await deletedTagRes.json(), {
+        status: 'ignored',
+        reason: 'tag deleted',
+      });
+
+      // 200 ignored: create event for branch
+      const branchCreateBody = JSON.stringify({
+        ref: 'v1.0.0',
+        ref_type: 'branch',
+        repository: { clone_url: 'https://github.com/wuhao5/myapp.git' },
+      });
+      const branchCreateRes = await fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-GitHub-Event': 'create',
+          'X-Hub-Signature-256': sign(cfg.webhookSecret, branchCreateBody),
+        },
+        body: branchCreateBody,
+      });
+      assert.equal(branchCreateRes.status, 200);
+      assert.deepEqual(await branchCreateRes.json(), {
+        status: 'ignored',
+        reason: 'unsupported create ref_type',
+      });
+
+      assert.deepEqual(receivedTags, [
+        { tag: 'v1.2.3', commit: '1122334455667788990011223344556677889900' },
+        { tag: 'v2.0.0', commit: undefined },
+      ]);
     } finally {
       await server.close();
     }
