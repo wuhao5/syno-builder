@@ -69,6 +69,9 @@ function logStartupSummary(config: Config): void {
   );
   logger.info(`  Dockerfile Path:   ${config.dockerfilePath}`);
   logger.info(`  Docker Image Name: ${config.dockerImageName}`);
+  if (config.dockerBuildFlags.length > 0) {
+    logger.info(`  Build Flags:       ${config.dockerBuildFlags.join(' ')}`);
+  }
   logger.info(`  Tag Each Build:    ${config.shouldTagEachBuild}`);
   if (config.imageTag) {
     logger.info(`  Custom Image Tag:  ${config.imageTag}`);

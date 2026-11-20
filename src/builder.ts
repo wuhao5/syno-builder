@@ -141,6 +141,16 @@ export function createBuildScriptEnv(
   };
 }
 
+export function hasCustomDockerfileFlag(flags: string[]): boolean {
+  return flags.some(
+    (flag) =>
+      flag === '-f' ||
+      flag === '--file' ||
+      flag.startsWith('--file=') ||
+      (flag.startsWith('-f') && flag.length > 2),
+  );
+}
+
 export function buildDockerArgs(
   config: Config,
   metadata: BuildMetadata,
@@ -163,6 +173,10 @@ export function buildDockerArgs(
 
   for (const secret of secrets) {
     args.push('--secret', `id=${secret.id},src=${secret.src}`);
+  }
+
+  if (config.dockerBuildFlags.length > 0) {
+    args.push(...config.dockerBuildFlags);
   }
 
   if (metadata.imageTag) {
@@ -230,7 +244,14 @@ export async function buildDockerImage(
 ): Promise<boolean> {
   const metadata = computeBuildMetadata(config, branch, commitHash);
 
-  if (!fs.existsSync(metadata.dockerfileFullPath)) {
+  if (!fs.existsSync(metadata.buildContext)) {
+    logger.error(`Build context directory not found at ${metadata.buildContext}`);
+    return false;
+  }
+
+  const usesCustomDockerfile =
+    !config.buildScript && hasCustomDockerfileFlag(config.dockerBuildFlags);
+  if (!usesCustomDockerfile && !fs.existsSync(metadata.dockerfileFullPath)) {
     logger.error(`Dockerfile not found at ${metadata.dockerfileFullPath}`);
     return false;
   }
@@ -271,8 +292,14 @@ export async function buildDockerImage(
     });
   } else {
     logger.info('Using default docker buildx build command');
+    if (config.dockerBuildFlags.length > 0) {
+      logger.info(`Build flags: ${config.dockerBuildFlags.join(' ')}`);
+    }
     const dockerArgs = buildDockerArgs(config, metadata, secrets);
-    buildResult = await runCommand('docker', dockerArgs, buildExecOptions);
+    buildResult = await runCommand('docker', dockerArgs, {
+      ...buildExecOptions,
+      cwd: metadata.buildContext,
+    });
   }
 
   if (buildResult.aborted) {

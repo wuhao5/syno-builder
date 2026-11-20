@@ -5,9 +5,11 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import {
   buildDockerArgs,
+  buildDockerImage,
   computeBuildMetadata,
   createBuildScriptEnv,
   discoverBuildSecrets,
+  hasCustomDockerfileFlag,
 } from '../src/builder.js';
 import type { Config } from '../src/config.js';
 
@@ -25,6 +27,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     buildTimeoutMs: 1_800_000,
     dockerfilePath: 'docker',
     dockerImageName: 'myapp',
+    dockerBuildFlags: [],
     shouldTagEachBuild: false,
     webhookPort: 9000,
     webhookHost: '0.0.0.0',
@@ -86,6 +89,151 @@ describe('computeBuildMetadata', () => {
     assert.ok(args.includes('myapp:main-abcdef1'));
     assert.ok(args.includes('myapp:main'));
     assert.equal(args[args.length - 1], path.resolve('/app/repo', 'docker'));
+  });
+
+  it('includes DOCKER_BUILD_FLAGS before tags and build context', () => {
+    const cfg = makeConfig({
+      dockerBuildFlags: ['--target', 'ab-hive-aio', '--no-cache', '--platform', 'linux/amd64'],
+      shouldTagEachBuild: false,
+    });
+    const meta = computeBuildMetadata(cfg, 'main', 'abcdef1234567890');
+    const args = buildDockerArgs(cfg, meta, []);
+
+    const targetIndex = args.indexOf('--target');
+    assert.ok(targetIndex > 0);
+    assert.equal(args[targetIndex + 1], 'ab-hive-aio');
+
+    const noCacheIndex = args.indexOf('--no-cache');
+    assert.ok(noCacheIndex > targetIndex);
+    assert.equal(args[noCacheIndex + 1], '--platform');
+    assert.equal(args[noCacheIndex + 2], 'linux/amd64');
+
+    const tagIndex = args.indexOf('-t');
+    assert.ok(tagIndex > noCacheIndex + 2);
+    assert.equal(args[tagIndex + 1], 'myapp:main');
+    assert.equal(args[args.length - 1], path.resolve('/app/repo', 'docker'));
+  });
+});
+
+describe('hasCustomDockerfileFlag', () => {
+  it('detects -f and --file variants', () => {
+    assert.equal(hasCustomDockerfileFlag(['--target', 'ab-hive-aio']), false);
+    assert.equal(hasCustomDockerfileFlag(['-f', 'Dockerfile.prod']), true);
+    assert.equal(hasCustomDockerfileFlag(['--file', 'Dockerfile.prod']), true);
+    assert.equal(hasCustomDockerfileFlag(['--file=Dockerfile.prod']), true);
+    assert.equal(hasCustomDockerfileFlag(['-fDockerfile.prod']), true);
+  });
+});
+
+describe('buildDockerImage', () => {
+  it('passes DOCKER_BUILD_FLAGS to docker buildx build and runs in build context', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'syno-builder-docker-'));
+    const originalPath = process.env.PATH ?? '';
+    try {
+      const binDir = path.join(tmp, 'bin');
+      const repoDir = path.join(tmp, 'repo');
+      const contextDir = path.join(repoDir, 'docker');
+      const secretsDir = path.join(tmp, 'secrets');
+      const logFile = path.join(tmp, 'docker-invocations.jsonl');
+
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(contextDir, { recursive: true });
+      fs.mkdirSync(secretsDir, { recursive: true });
+      // Only create a non-default Dockerfile to verify -f bypasses default Dockerfile check
+      fs.writeFileSync(path.join(contextDir, 'Dockerfile.aio'), 'FROM alpine:latest\n');
+
+      const fakeDockerPath = path.join(binDir, 'docker');
+      fs.writeFileSync(
+        fakeDockerPath,
+        `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(logFile)}, JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }) + '\\n');
+`,
+        { mode: 0o755 },
+      );
+
+      process.env.PATH = `${binDir}${path.delimiter}${originalPath}`;
+
+      const cfg = makeConfig({
+        repoDir,
+        secretsDir,
+        dockerfilePath: 'docker',
+        dockerImageName: 'myapp',
+        dockerBuildFlags: ['--target', 'ab-hive-aio', '-f', 'Dockerfile.aio', '--no-cache'],
+      });
+
+      const ok = await buildDockerImage(cfg, 'main', 'abcdef1234567890');
+      assert.equal(ok, true);
+
+      const invocations = fs
+        .readFileSync(logFile, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as { cwd: string; args: string[] });
+
+      assert.equal(invocations.length, 2); // buildx build + tag :latest
+      const [buildCall, tagCall] = invocations;
+      assert.ok(buildCall);
+      assert.ok(tagCall);
+      assert.equal(fs.realpathSync(buildCall.cwd), fs.realpathSync(contextDir));
+      const buildArgs = buildCall.args;
+      assert.equal(buildArgs[0], 'buildx');
+      assert.equal(buildArgs[1], 'build');
+      const targetIdx = buildArgs.indexOf('--target');
+      assert.ok(targetIdx > 0);
+      assert.equal(buildArgs[targetIdx + 1], 'ab-hive-aio');
+      assert.ok(buildArgs.includes('-f'));
+      assert.ok(buildArgs.includes('Dockerfile.aio'));
+      assert.ok(buildArgs.includes('--no-cache'));
+      assert.equal(buildArgs[buildArgs.length - 1], contextDir);
+
+      assert.deepEqual(tagCall.args, ['tag', 'myapp:main', 'myapp:latest']);
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates docker build failure when invalid flags are passed', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'syno-builder-docker-fail-'));
+    const originalPath = process.env.PATH ?? '';
+    try {
+      const binDir = path.join(tmp, 'bin');
+      const repoDir = path.join(tmp, 'repo');
+      const contextDir = path.join(repoDir, 'docker');
+      const secretsDir = path.join(tmp, 'secrets');
+
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(contextDir, { recursive: true });
+      fs.mkdirSync(secretsDir, { recursive: true });
+      fs.writeFileSync(path.join(contextDir, 'Dockerfile'), 'FROM alpine:latest\n');
+
+      const fakeDockerPath = path.join(binDir, 'docker');
+      fs.writeFileSync(
+        fakeDockerPath,
+        `#!/usr/bin/env node
+console.error('ERROR: unknown flag: --not-a-real-flag');
+process.exit(1);
+`,
+        { mode: 0o755 },
+      );
+
+      process.env.PATH = `${binDir}${path.delimiter}${originalPath}`;
+
+      const cfg = makeConfig({
+        repoDir,
+        secretsDir,
+        dockerfilePath: 'docker',
+        dockerImageName: 'myapp',
+        dockerBuildFlags: ['--not-a-real-flag'],
+      });
+
+      const ok = await buildDockerImage(cfg, 'main', 'abcdef1234567890');
+      assert.equal(ok, false);
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

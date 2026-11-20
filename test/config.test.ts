@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { loadConfig, normalizeWebhookPath } from '../src/config.js';
+import { loadConfig, normalizeWebhookPath, parseDockerBuildFlags } from '../src/config.js';
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'syno-builder-config-'));
@@ -29,6 +29,7 @@ describe('loadConfig', () => {
       assert.equal(cfg.buildTimeoutMs, 1_800_000);
       assert.equal(cfg.dockerfilePath, '.');
       assert.equal(cfg.dockerImageName, 'auto-built-image');
+      assert.deepEqual(cfg.dockerBuildFlags, []);
       assert.equal(cfg.shouldTagEachBuild, false);
       assert.equal(cfg.imageTag, undefined);
       assert.equal(cfg.webhookPort, 9000);
@@ -188,5 +189,46 @@ describe('loadConfig', () => {
     assert.equal(normalizeWebhookPath('webhook'), '/webhook');
     assert.equal(normalizeWebhookPath('/hooks/github/'), '/hooks/github');
     assert.equal(normalizeWebhookPath('/'), '/');
+  });
+
+  it('loads DOCKER_BUILD_FLAGS into config', () => {
+    const tmp = makeTempDir();
+    try {
+      const cfg = loadConfig({
+        GIT_REPO: 'https://github.com/user/repo.git',
+        DOCKER_BUILD_FLAGS: '--target ab-hive-aio --build-arg "MSG=hello world" --label \'env=prod\'',
+        SECRETS_DIR: tmp,
+      });
+
+      assert.deepEqual(cfg.dockerBuildFlags, [
+        '--target',
+        'ab-hive-aio',
+        '--build-arg',
+        'MSG=hello world',
+        '--label',
+        'env=prod',
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseDockerBuildFlags', () => {
+  it('splits flags with optional quotes and passes unknown/malformed inputs through for docker to validate', () => {
+    assert.deepEqual(parseDockerBuildFlags(undefined), []);
+    assert.deepEqual(parseDockerBuildFlags('   '), []);
+    assert.deepEqual(parseDockerBuildFlags('--target ab-hive-aio\n--no-cache'), [
+      '--target',
+      'ab-hive-aio',
+      '--no-cache',
+    ]);
+    assert.deepEqual(parseDockerBuildFlags('--build-arg MSG="hello world" --build-arg EMPTY=""'), [
+      '--build-arg',
+      'MSG=hello world',
+      '--build-arg',
+      'EMPTY=',
+    ]);
+    assert.deepEqual(parseDockerBuildFlags('--build-arg "unclosed'), ['--build-arg', '"unclosed']);
   });
 });

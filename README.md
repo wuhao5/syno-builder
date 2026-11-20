@@ -140,6 +140,7 @@ All configuration is done through environment variables:
 - `GIT_PAT` - Personal Access Token as environment variable (fallback if file doesn't exist)
 - `DOCKERFILE_PATH` - Path to the Dockerfile directory within the repository (default: `.`)
 - `DOCKER_IMAGE_NAME` - Name for the built Docker image (default: `auto-built-image`)
+- `DOCKER_BUILD_FLAGS` - Extra CLI flags passed to `docker buildx build` (optional; e.g., `--target production`, `--no-cache --platform linux/amd64`, or `--build-arg "FOO=bar baz"`)
 - `IMAGE_TAG` - Custom Docker image tag (optional)
   - If not provided and `SHOULD_TAG_EACH_BUILD=true`, defaults to `{DOCKER_IMAGE_NAME}:{branch}-{git-hash-7chars}`
 - `SHOULD_TAG_EACH_BUILD` - Enable unique commit-based tag per build (default: `false`)

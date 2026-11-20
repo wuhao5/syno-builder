@@ -27,6 +27,7 @@ function makeTestConfig(overrides: Partial<Config> = {}): Config {
     buildTimeoutMs: 1_800_000,
     dockerfilePath: '.',
     dockerImageName: 'myapp',
+    dockerBuildFlags: [],
     shouldTagEachBuild: false,
     webhookPort: 0,
     webhookHost: '127.0.0.1',

@@ -39,6 +39,7 @@ services:
       - GIT_PAT_FILE=${GIT_PAT_FILE:-/app/secrets/pat}
       - DOCKERFILE_PATH=${DOCKERFILE_PATH:-.}
       - DOCKER_IMAGE_NAME=${DOCKER_IMAGE_NAME:-auto-built-image}
+      - DOCKER_BUILD_FLAGS=${DOCKER_BUILD_FLAGS:-}
       # Optional: Override startup check behavior (default: true in poll/both, false in webhook)
       # - RUN_ON_STARTUP=${RUN_ON_STARTUP:-}
       # Optional: Custom build / post-build script paths

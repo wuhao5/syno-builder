@@ -70,6 +70,7 @@ echo "{\\"branch\\":\\"$BRANCH\\",\\"commit\\":\\"$GIT_COMMIT_HASH\\",\\"tag\\":
         buildTimeoutMs: 1_800_000,
         dockerfilePath: '.',
         dockerImageName: 'testapp',
+        dockerBuildFlags: [],
         shouldTagEachBuild: true,
         buildScript: buildScriptPath,
         webhookPort: 9000,

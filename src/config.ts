@@ -16,6 +16,7 @@ export interface Config {
   buildTimeoutMs: number;
   dockerfilePath: string;
   dockerImageName: string;
+  dockerBuildFlags: string[];
   imageTag?: string;
   shouldTagEachBuild: boolean;
   buildScript?: string;
@@ -100,6 +101,17 @@ export function validateImageTag(imageTag: string): void {
   }
 }
 
+export function parseDockerBuildFlags(raw: string | undefined): string[] {
+  const trimmed = raw?.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const matches = trimmed.match(/(?:"[^"]*"|'[^']*'|[^\s])+/g) ?? [];
+  return matches.map((token) =>
+    token.replace(/"([^"]*)"|'([^']*)'/g, (_, dq?: string, sq?: string) => dq ?? sq ?? ''),
+  );
+}
+
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
   options: LoadConfigOptions = {},
@@ -182,6 +194,7 @@ export function loadConfig(
 
   const dockerfilePath = env.DOCKERFILE_PATH?.trim() || '.';
   const dockerImageName = env.DOCKER_IMAGE_NAME?.trim() || 'auto-built-image';
+  const dockerBuildFlags = parseDockerBuildFlags(env.DOCKER_BUILD_FLAGS);
   const buildScript = env.BUILD_SCRIPT?.trim() || undefined;
   const postBuildScript = env.POST_BUILD_SCRIPT?.trim() || undefined;
 
@@ -201,6 +214,7 @@ export function loadConfig(
     buildTimeoutMs: Math.round(buildTimeoutSeconds * 1000),
     dockerfilePath,
     dockerImageName,
+    dockerBuildFlags,
     imageTag,
     shouldTagEachBuild,
     buildScript,
