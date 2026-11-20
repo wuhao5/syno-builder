@@ -1,32 +1,38 @@
+# Stage 1: Build TypeScript into a single zero-dependency ESM bundle
+FROM node:22-alpine AS builder
+
+WORKDIR /build
+
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci
+
+COPY src ./src
+RUN npm run build
+
+# Stage 2: Minimal Alpine runtime (nodejs without npm/corepack + git + docker-cli/buildx)
 FROM alpine:latest
 
-# Set Docker API version to 1.43 to ensure compatibility
+# Set Docker API version to 1.43 to ensure compatibility with Synology Docker
 ENV DOCKER_API_VERSION=1.43
 
-# Install required packages
 RUN apk add --no-cache \
+    tini \
+    nodejs \
     git \
     docker-cli \
     docker-cli-buildx \
     bash \
     curl \
-    dcron \
     && rm -rf /var/cache/apk/*
 
-# Create working directory
 WORKDIR /app
 
-# Copy scripts
-COPY scripts/entrypoint.sh /app/entrypoint.sh
+COPY --from=builder /build/dist/index.mjs /app/index.mjs
 COPY scripts/check-and-build.sh /app/check-and-build.sh
 
-# Make scripts executable
-RUN chmod +x /app/entrypoint.sh /app/check-and-build.sh
+RUN chmod +x /app/index.mjs /app/check-and-build.sh \
+    && mkdir -p /app/state /var/log
 
-# Create directory for state tracking
-RUN mkdir -p /app/state
+EXPOSE 9000
 
-# Set up cron log file
-RUN mkdir -p /var/log && touch /var/log/cron.log
-
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/sbin/tini", "--", "node", "/app/index.mjs"]

@@ -1,0 +1,38 @@
+{
+  "name": "syno-builder",
+  "version": "2.0.0",
+  "description": "Auto git puller, GitHub webhook listener, and Docker image builder for Synology NAS",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "bin": {
+    "syno-builder": "dist/index.mjs"
+  },
+  "files": [
+    "dist/index.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/index.mjs --banner:js=\"#!/usr/bin/env node\"",
+    "typecheck": "tsc --noEmit",
+    "test": "rm -rf build-test && tsc -p tsconfig.test.json && node --test build-test/test/*.test.js",
+    "start": "node dist/index.mjs"
+  },
+  "keywords": [
+    "synology",
+    "docker",
+    "git",
+    "webhook",
+    "github",
+    "ci-cd",
+    "builder"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

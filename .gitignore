@@ -1,6 +1,12 @@
 # Environment file
 .env
 
+# Node / TypeScript build artifacts
+node_modules/
+dist/
+build-test/
+coverage/
+
 # Temporary files
 /tmp/
 

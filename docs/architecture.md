@@ -1,118 +1,72 @@
-# Syno-Builder Workflow
+# Syno-Builder Architecture
 
 ## System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Synology NAS                             │
-│                                                               │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           Syno-Builder Container                     │   │
-│  │                                                       │   │
-│  │  ┌──────────────┐    ┌────────────────────────┐    │   │
-│  │  │ Cron Daemon  │───>│  check-and-build.sh   │    │   │
-│  │  │ (scheduled)  │    │                        │    │   │
-│  │  └──────────────┘    │  1. Git fetch/pull     │    │   │
-│  │                      │  2. Check commit hash  │    │   │
-│  │                      │  3. Build if changed   │    │   │
-│  │                      └────────────────────────┘    │   │
-│  │                                │                    │   │
-│  │                                v                    │   │
-│  │                      ┌────────────────────────┐    │   │
-│  │                      │   State Persistence    │    │   │
-│  │                      │  /app/state/last_      │    │   │
-│  │                      │  commit.txt            │    │   │
-│  │                      └────────────────────────┘    │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                                │                              │
-│                                v                              │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │              Docker Socket                           │   │
-│  │  /var/run/docker.sock (Docker-in-Docker)            │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                                │                              │
-│                                v                              │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │         Built Docker Images                          │   │
-│  │  - myapp:20240127-143000                            │   │
-│  │  - myapp:latest                                      │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
-                           │
-                           │ git pull
-                           v
-                    ┌──────────────┐
-                    │  Git Repo    │
-                    │  (GitHub/    │
-                    │  GitLab/etc) │
-                    └──────────────┘
+```text
+GitHub (push event)
+   │ HTTPS POST + X-Hub-Signature-256
+   ▼
+Synology DSM Reverse Proxy (:443 -> 127.0.0.1:9000)
+   │ HTTP POST /webhook
+   ▼
+┌────────────────────────────────────────────────────────────────┐
+│                     Syno-Builder Container                      │
+│                   (Alpine + Node.js Runtime)                    │
+│                                                                 │
+│  ┌────────────────────┐      ┌──────────────────────────────┐  │
+│  │ Webhook Server     │      │ Polling Scheduler            │  │
+│  │ (node:http, :9000) │      │ (setInterval, CHECK_INTERVAL)│  │
+│  │ - HMAC-SHA256 auth │      └──────────────┬───────────────┘  │
+│  │ - repo/branch match│                     │                  │
+│  │ - 202 Accepted     │                     │                  │
+│  └─────────┬──────────┘                     │                  │
+│            └──────────────┬─────────────────┘                  │
+│                           ▼                                    │
+│            ┌──────────────────────────────┐                    │
+│            │ BuildQueue                   │                    │
+│            │ - Single-flight execution    │                    │
+│            │ - Branch coalescing (Set)    │                    │
+│            └──────────────┬───────────────┘                    │
+│                           ▼                                    │
+│            ┌──────────────────────────────┐                    │
+│            │ Git Sync + State + Builder   │                    │
+│            │ 1. git fetch/reset (env auth)│                    │
+│            │ 2. Compare /app/state hash   │                    │
+│            │ 3. docker buildx / script    │                    │
+│            │ 4. Detached POST_BUILD_SCRIPT│                    │
+│            └──────────────┬───────────────┘                    │
+└───────────────────────────┼────────────────────────────────────┘
+                            ▼
+                 /var/run/docker.sock
 ```
 
-## Workflow Steps
+## Trigger Modes
 
-### Step 1: Initial Startup
-1. Container starts and runs `entrypoint.sh`
-2. Validates required environment variables
-3. Runs initial `check-and-build.sh`
-4. Sets up cron job based on `CHECK_INTERVAL`
+| Mode | Webhook Server | Polling Timer | Default `RUN_ON_STARTUP` |
+| :--- | :--- | :--- | :--- |
+| `poll` *(default)* | Off | On (`CHECK_INTERVAL`) | `true` |
+| `webhook` | On (`WEBHOOK_PORT`) | Off | `false` |
+| `both` | On (`WEBHOOK_PORT`) | On (`CHECK_INTERVAL`) | `true` |
 
-### Step 2: Repository Check (Runs on Schedule)
-1. Clone repository (first time) or update existing clone
-2. Authenticate using `GIT_PAT` if provided
-3. Get current commit hash
-4. Compare with last processed commit from state file
+## Source Modules
 
-### Step 3: Change Detection
-- **No Changes**: Skip build, exit cleanly
-- **Changes Detected**: Proceed to build
+| File | Responsibility |
+| :--- | :--- |
+| `src/index.ts` | Entrypoint, CLI (`--once`, `--branch`), mode startup, graceful `SIGTERM`/`SIGINT` shutdown |
+| `src/config.ts` | Environment variable & secret file loading with strict validation |
+| `src/webhook.ts` | `node:http` server (`/webhook`, `/health`), constant-time HMAC-SHA256 verification, payload & repo/branch filtering |
+| `src/queue.ts` | Single-flight `BuildQueue` with duplicate branch coalescing |
+| `src/git.ts` | Repository cloning, explicit refspec fetch/reset, and env-scoped `GIT_CONFIG_*` PAT auth |
+| `src/builder.ts` | BuildKit secret discovery (excluding `pat`/`webhook_secret`), per-branch tagging, `docker buildx build`, custom/post-build scripts |
+| `src/exec.ts` | Child-process runner with POSIX process-group isolation, `AbortSignal` cancellation, and `SIGTERM` → `SIGKILL` timeout escalation |
+| `src/state.ts` | Atomic commit hash persistence in `/app/state/last_commit_<branch>.txt` |
+| `src/logger.ts` | Timestamped logging to stdout/stderr (`docker logs`) |
 
-### Step 4: Docker Build
-1. Locate Dockerfile in repository at `DOCKERFILE_PATH`
-2. Build Docker image using Docker-in-Docker
-3. Tag with timestamp: `${DOCKER_IMAGE_NAME}:YYYYMMDD-HHMMSS`
-4. Tag with latest: `${DOCKER_IMAGE_NAME}:latest`
-5. Save current commit hash to state file
+## Process Lifecycle & Security Considerations
 
-### Step 5: Scheduling
-- Cron daemon runs check at configured interval
-- Logs output to `/var/log/cron.log`
-- Process repeats continuously
-
-## Data Flow
-
-```
-Environment Variables → Configuration
-         ↓
-Git Repository → Clone/Update → Commit Hash Check
-         ↓                            ↓
-    [Changed?] ←────── Yes ────── Build Image
-         ↓                            ↓
-      No ↓                      Tag & Store
-         ↓                            ↓
-    Wait for Next Check ←────── Save State
-```
-
-## File Locations
-
-| Path | Purpose |
-|------|---------|
-| `/app/repo/` | Cloned git repository |
-| `/app/state/last_commit_<branch>.txt` | Last processed commit hash per branch |
-| `/app/secrets/pat` | Mounted PAT file (optional) |
-| `/var/log/cron.log` | Cron job execution logs |
-| `~/.git-credentials` | Stored git credentials (secure) |
-
-## Security Considerations
-
-1. **Credentials**: Stored in `~/.git-credentials` with 600 permissions
-2. **Docker Socket**: Shared with host for Docker-in-Docker
-3. **State Volume**: Persistent across container restarts
-4. **No Logging**: PAT never appears in logs or output
-
-## Customization Points
-
-- **CHECK_INTERVAL**: Adjust polling frequency
-- **DOCKERFILE_PATH**: Build from subdirectory
-- **GIT_BRANCH**: Monitor different branches
-- **Multiple Instances**: Run multiple containers for different repos
+1. **PID 1 & Zombie Reaping**: The container runs `tini` (`/sbin/tini -- node /app/index.mjs`) as PID 1 to forward signals cleanly and automatically reap completed detached `POST_BUILD_SCRIPT` processes.
+2. **Process-Group Cancellation & Timeouts**: `git` and Docker build subprocesses run in their own POSIX process groups with configurable timeouts (`GIT_TIMEOUT_SECONDS`, `BUILD_TIMEOUT_SECONDS`) and `AbortSignal` propagation on `SIGTERM`/`SIGINT` (`SIGTERM` followed by `SIGKILL` after 5s grace).
+3. **Webhook Verification**: Constant-time HMAC-SHA256 validation (`X-Hub-Signature-256`) is mandatory in `webhook` and `both` modes; payloads over 1 MB are rejected with `413`.
+4. **Localhost Port Binding**: `docker-compose.yml` binds `127.0.0.1:9000:9000` so external traffic must pass through Synology DSM's HTTPS Reverse Proxy.
+5. **Ephemeral Git Auth**: PAT tokens are passed to `git` via scoped `GIT_CONFIG_*` environment variables (`GIT_TERMINAL_PROMPT=0`) rather than written to `~/.git-credentials`.
+6. **Reserved Secrets Excluded from Builds**: `pat` and `webhook_secret` in `/app/secrets` are excluded from Docker BuildKit `--secret` mounts.

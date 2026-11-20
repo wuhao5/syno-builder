@@ -2,54 +2,28 @@
 
 ## Core Components
 
-**Dockerfile**
-- Alpine Linux-based minimal image with git, docker-cli, bash, dcron
-- Configurable environment variables for repository, branch, credentials, and build settings
+**Dockerfile (Multi-Stage)**
+- Builder stage (`node:22-alpine`): compiles TypeScript into a single zero-dependency ESM bundle (`dist/index.mjs`) via `esbuild`
+- Runtime stage (`alpine:latest`): minimal image with `nodejs` (no `npm`), `git`, `docker-cli`, `docker-cli-buildx`, `bash`, and `curl`
 
-**Scripts**
-- `entrypoint.sh`: Initializes cron scheduler and runs initial check
-- `check-and-build.sh`: Monitors git repository, detects changes via commit hash, triggers Docker builds
+**TypeScript Application (`src/`)**
+- `index.ts`: Daemon entrypoint (`poll`, `webhook`, `both`) and one-shot CLI (`--once`)
+- `webhook.ts`: Built-in `node:http` GitHub webhook listener with HMAC-SHA256 signature verification and `/health` endpoint
+- `queue.ts`: Single-flight build queue with branch coalescing for rapid pushes
+- `git.ts`, `builder.ts`, `state.ts`, `config.ts`: Git sync, commit hash state tracking, Docker Buildx / custom script execution, and detached post-build hooks
 
-**Change Detection**
-- Tracks last processed commit hash in `/app/state/last_commit.txt`
-- Builds only when new commits are detected
-- Persistent state across container restarts
+**Compatibility Shim**
+- `scripts/check-and-build.sh`: Forwards `docker exec syno-builder /app/check-and-build.sh` to `node /app/index.mjs --once`
 
-## Configuration
+## Key Configuration
 
-**Required**
-- `GIT_REPO`: Repository URL
-- `GIT_PAT_FILE`: Path to mounted file containing Personal Access Token (fallback to `GIT_PAT` env var)
+- **Required**: `GIT_REPO`
+- **Triggering**: `TRIGGER_MODE` (`poll` | `webhook` | `both`), `CHECK_INTERVAL`, `RUN_ON_STARTUP`
+- **Webhook**: `WEBHOOK_PORT`, `WEBHOOK_PATH`, `WEBHOOK_SECRET_FILE` (`/app/secrets/webhook_secret`) or `WEBHOOK_SECRET`
+- **Git & Docker**: `GIT_BRANCH`, `GIT_PAT_FILE` (`/app/secrets/pat`) or `GIT_PAT`, `DOCKERFILE_PATH`, `DOCKER_IMAGE_NAME`, `IMAGE_TAG`, `SHOULD_TAG_EACH_BUILD`, `BUILD_SCRIPT`, `POST_BUILD_SCRIPT`
 
-**Optional**
-- `GIT_BRANCH`: Branch to monitor (default: main) - supports comma-separated list for multiple branches
-- `CHECK_INTERVAL`: Polling frequency in minutes (default: 60)
-- `DOCKERFILE_PATH`: Path to Dockerfile within repository (default: .)
-- `DOCKER_IMAGE_NAME`: Output image name (default: auto-built-image)
+## Testing & Verification
 
-## Security
-
-- Credentials read from mounted file or environment variable
-- Stored using git credential helper with 600 permissions
-- Hostname auto-detected from repository URL (supports GitHub, GitLab, Bitbucket, self-hosted)
-- No credential exposure in logs
-
-## Deployment
-
-```bash
-docker run -d \
-  -e GIT_REPO=https://github.com/user/repo.git \
-  -v /path/to/pat:/app/secrets/pat:ro \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v syno-builder-state:/app/state \
-  syno-builder
-```
-
-Built images are tagged with `${DOCKER_IMAGE_NAME}:YYYYMMDD-HHMMSS` and `:latest`.
-
-## Files
-
-- `Dockerfile`, `docker-compose.yml` - Container definition
-- `scripts/entrypoint.sh`, `scripts/check-and-build.sh` - Core automation logic
-- `.env.example` - Configuration template
-- `README.md` - User documentation
+- `npm run typecheck`: Strict TypeScript validation
+- `npm test`: Unit and local git integration tests using Node's built-in `node:test` runner
+- `npm run build`: Single-file production bundle verification

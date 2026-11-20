@@ -4,3 +4,11 @@
 .env.*
 *.log
 .syno-secrets-*
+node_modules
+dist
+build-test
+coverage
+test
+docs
+test-example
+README.md

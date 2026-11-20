@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   syno-builder:
     image: ghcr.io/wuhao5/syno-builder:latest
@@ -7,30 +5,44 @@ services:
     # build: .
     container_name: syno-builder
     restart: unless-stopped
+    stop_grace_period: 30s
     env_file:
       - .env
+    # Bind webhook listener to localhost only so traffic goes through Synology Reverse Proxy (HTTPS)
+    ports:
+      - "127.0.0.1:${WEBHOOK_PORT:-9000}:${WEBHOOK_PORT:-9000}"
     volumes:
       # Required: Docker socket for Docker-in-Docker
       - /var/run/docker.sock:/var/run/docker.sock
       # Recommended: Persist state across restarts
       - syno-builder-state:/app/state
-      # Optional: Mount PAT file individually (if not mounting entire /app/secrets directory)
-      # - /path/to/pat:/app/secrets/pat:ro
-      # Optional: Mount post-build script
-      # - /path/to/post-build.sh:/app/scripts/post-build.sh:ro
-      # Optional: Mount entire secrets directory (for both PAT and docker build secrets)
-      # The PAT file will be used for git auth and automatically excluded from build secrets
+      # Optional: Mount secrets directory (for PAT, webhook_secret, and Docker BuildKit secrets)
+      # Reserved files 'pat' and 'webhook_secret' are automatically excluded from build secrets
       # - /path/to/secrets:/app/secrets:ro
+      # Optional: Mount individual secret files
+      # - /path/to/pat:/app/secrets/pat:ro
+      # - /path/to/webhook_secret:/app/secrets/webhook_secret:ro
+      # Optional: Mount custom build / post-build scripts
+      # - /path/to/custom-build.sh:/app/scripts/custom-build.sh:ro
+      # - /path/to/post-build.sh:/app/scripts/post-build.sh:ro
     environment:
       # These can be overridden in .env file
       - GIT_REPO=${GIT_REPO}
       - GIT_BRANCH=${GIT_BRANCH:-main}
-      - GIT_PAT=${GIT_PAT}
-      - GIT_PAT_FILE=${GIT_PAT_FILE:-/app/secrets/pat}
+      - TRIGGER_MODE=${TRIGGER_MODE:-poll}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-60}
+      - WEBHOOK_PORT=${WEBHOOK_PORT:-9000}
+      - WEBHOOK_PATH=${WEBHOOK_PATH:-/webhook}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - WEBHOOK_SECRET_FILE=${WEBHOOK_SECRET_FILE:-/app/secrets/webhook_secret}
+      - GIT_PAT=${GIT_PAT:-}
+      - GIT_PAT_FILE=${GIT_PAT_FILE:-/app/secrets/pat}
       - DOCKERFILE_PATH=${DOCKERFILE_PATH:-.}
       - DOCKER_IMAGE_NAME=${DOCKER_IMAGE_NAME:-auto-built-image}
-      # Optional: Post-build script path
+      # Optional: Override startup check behavior (default: true in poll/both, false in webhook)
+      # - RUN_ON_STARTUP=${RUN_ON_STARTUP:-}
+      # Optional: Custom build / post-build script paths
+      # - BUILD_SCRIPT=${BUILD_SCRIPT:-}
       # - POST_BUILD_SCRIPT=${POST_BUILD_SCRIPT:-}
 
 volumes:
