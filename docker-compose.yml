@@ -22,6 +22,9 @@ services:
       # Optional: Mount individual secret files
       # - /path/to/pat:/app/secrets/pat:ro
       # - /path/to/webhook_secret:/app/secrets/webhook_secret:ro
+      # Optional: Mount your Synology Container Manager project folder at the EXACT SAME path
+      # to enable built-in auto-redeploy via COMPOSE_PROJECT_DIR (no post-build script needed)
+      # - /volume1/docker/my-app:/volume1/docker/my-app:ro
       # Optional: Mount custom build / post-build scripts
       # - /path/to/custom-build.sh:/app/scripts/custom-build.sh:ro
       # - /path/to/post-build.sh:/app/scripts/post-build.sh:ro
@@ -40,6 +43,12 @@ services:
       - DOCKERFILE_PATH=${DOCKERFILE_PATH:-.}
       - DOCKER_IMAGE_NAME=${DOCKER_IMAGE_NAME:-auto-built-image}
       - DOCKER_BUILD_FLAGS=${DOCKER_BUILD_FLAGS:-}
+      # Optional: Auto-redeploy a Synology Container Manager (Docker Compose) project after build
+      # - COMPOSE_PROJECT_DIR=${COMPOSE_PROJECT_DIR:-}
+      # - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-}
+      # - COMPOSE_SERVICE=${COMPOSE_SERVICE:-}
+      # - COMPOSE_FILE=${COMPOSE_FILE:-}
+      # - COMPOSE_BRANCH=${COMPOSE_BRANCH:-}
       # Optional: Override startup check behavior (default: true in poll/both, false in webhook)
       # - RUN_ON_STARTUP=${RUN_ON_STARTUP:-}
       # Optional: Custom build / post-build script paths

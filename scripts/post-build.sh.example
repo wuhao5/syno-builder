@@ -7,8 +7,10 @@ echo "Post-build script executed at $(date)"
 echo "Built image: $IMAGE_TAG"
 echo "Branch: $BRANCH"
 
-# Example 1: Start a docker compose application
-# cd /path/to/compose/dir && docker compose up -d
+# Example 1: Recreate a Synology Container Manager (Docker Compose) service
+# Tip: For standard Compose redeploys, you can also use the built-in COMPOSE_PROJECT_DIR,
+# COMPOSE_PROJECT_NAME, and COMPOSE_SERVICE env vars without needing a post-build script.
+# cd /volume1/docker/my-app && docker compose -p my-app up -d --no-build --no-deps web
 
 # Example 2: Deploy the newly built image
 # docker stop my-app || true

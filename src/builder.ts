@@ -236,6 +236,81 @@ function launchPostBuildScript(
   }
 }
 
+export function shouldDeployCompose(config: Config, branch: string): boolean {
+  if (!config.composeProjectDir) {
+    return false;
+  }
+  if (config.composeBranch && config.composeBranch !== branch) {
+    return false;
+  }
+  return true;
+}
+
+export function buildComposeArgs(config: Config): string[] {
+  const args: string[] = ['compose'];
+  if (config.composeProjectName) {
+    args.push('-p', config.composeProjectName);
+  }
+  if (config.composeFile) {
+    args.push('-f', config.composeFile);
+  }
+  args.push('up', '-d', '--no-build');
+  if (config.composeServices.length > 0) {
+    args.push('--no-deps', ...config.composeServices);
+  }
+  return args;
+}
+
+export async function deployComposeProject(
+  config: Config,
+  branch: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!config.composeProjectDir) {
+    return true;
+  }
+
+  if (!fs.existsSync(config.composeProjectDir)) {
+    logger.error(
+      `COMPOSE_PROJECT_DIR not found at ${config.composeProjectDir}. Ensure your Synology Container Manager project directory is mounted at the exact same path inside the container.`,
+    );
+    return false;
+  }
+
+  const composeArgs = buildComposeArgs(config);
+  logger.info(
+    `Redeploying Docker Compose project in ${config.composeProjectDir} for branch "${branch}": docker ${composeArgs.join(' ')}`,
+  );
+
+  const res = await runCommand('docker', composeArgs, {
+    cwd: config.composeProjectDir,
+    timeoutMs: config.composeTimeoutMs,
+    signal,
+  });
+
+  if (res.aborted) {
+    logger.warn(`Docker Compose redeploy aborted for branch "${branch}" due to shutdown.`);
+    return false;
+  }
+
+  if (res.timedOut) {
+    logger.error(
+      `Docker Compose redeploy timed out for branch "${branch}" after ${Math.round(config.composeTimeoutMs / 1000)}s.`,
+    );
+    return false;
+  }
+
+  if (res.exitCode !== 0) {
+    logger.error(
+      `Docker Compose redeploy failed for branch "${branch}" (exit code: ${res.exitCode})`,
+    );
+    return false;
+  }
+
+  logger.info(`Docker Compose project redeployed successfully for branch "${branch}"!`);
+  return true;
+}
+
 export async function buildDockerImage(
   config: Config,
   branch: string,
@@ -340,6 +415,22 @@ export async function buildDockerImage(
     } else {
       logger.info(`Latest tag (if created by build script): ${metadata.imageLatest}`);
     }
+  }
+
+  if (signal?.aborted) {
+    logger.warn(`Skipping post-build actions for branch "${branch}" due to shutdown.`);
+    return false;
+  }
+
+  if (shouldDeployCompose(config, branch)) {
+    const deployed = await deployComposeProject(config, branch, signal);
+    if (!deployed) {
+      return false;
+    }
+  } else if (config.composeProjectDir && config.composeBranch) {
+    logger.info(
+      `Skipping Docker Compose redeploy for branch "${branch}" (COMPOSE_BRANCH=${config.composeBranch})`,
+    );
   }
 
   if (signal?.aborted) {

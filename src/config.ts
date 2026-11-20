@@ -14,6 +14,7 @@ export interface Config {
   checkIntervalMinutes: number;
   gitTimeoutMs: number;
   buildTimeoutMs: number;
+  composeTimeoutMs: number;
   dockerfilePath: string;
   dockerImageName: string;
   dockerBuildFlags: string[];
@@ -21,6 +22,11 @@ export interface Config {
   shouldTagEachBuild: boolean;
   buildScript?: string;
   postBuildScript?: string;
+  composeProjectDir?: string;
+  composeProjectName?: string;
+  composeServices: string[];
+  composeFile?: string;
+  composeBranch?: string;
   webhookPort: number;
   webhookHost: string;
   webhookPath: string;
@@ -37,6 +43,7 @@ export interface LoadConfigOptions {
 }
 
 const VALID_IMAGE_TAG_REGEX = /^[a-zA-Z0-9._:/-]+$/;
+const VALID_COMPOSE_IDENTIFIER_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 function readSecret(
   filePath: string,
@@ -156,6 +163,15 @@ export function loadConfig(
     throw new Error(`Invalid BUILD_TIMEOUT_SECONDS "${env.BUILD_TIMEOUT_SECONDS}". Must be a non-negative number (0 disables timeout).`);
   }
 
+  const rawComposeTimeout = env.COMPOSE_TIMEOUT_SECONDS?.trim();
+  const composeTimeoutSeconds =
+    rawComposeTimeout !== undefined && rawComposeTimeout !== '' ? Number(rawComposeTimeout) : 300;
+  if (!Number.isFinite(composeTimeoutSeconds) || composeTimeoutSeconds < 0) {
+    throw new Error(
+      `Invalid COMPOSE_TIMEOUT_SECONDS "${env.COMPOSE_TIMEOUT_SECONDS}". Must be a non-negative number (0 disables timeout).`,
+    );
+  }
+
   const rawPort = env.WEBHOOK_PORT?.trim();
   const webhookPort = rawPort ? Number(rawPort) : 9000;
   if (!Number.isInteger(webhookPort) || webhookPort < 1 || webhookPort > 65535) {
@@ -198,6 +214,37 @@ export function loadConfig(
   const buildScript = env.BUILD_SCRIPT?.trim() || undefined;
   const postBuildScript = env.POST_BUILD_SCRIPT?.trim() || undefined;
 
+  const rawComposeDir = env.COMPOSE_PROJECT_DIR?.trim();
+  const composeProjectDir = rawComposeDir ? path.resolve(rawComposeDir) : undefined;
+
+  const composeProjectName = env.COMPOSE_PROJECT_NAME?.trim() || undefined;
+  if (composeProjectName && !VALID_COMPOSE_IDENTIFIER_REGEX.test(composeProjectName)) {
+    throw new Error(
+      `Invalid COMPOSE_PROJECT_NAME "${composeProjectName}". Must start with an alphanumeric character and contain only alphanumeric characters, dots, hyphens, or underscores.`,
+    );
+  }
+
+  const rawComposeServices = env.COMPOSE_SERVICE?.trim() ?? '';
+  const composeServiceSet = new Set<string>();
+  for (const part of rawComposeServices.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.length > 0) {
+      if (!VALID_COMPOSE_IDENTIFIER_REGEX.test(trimmed)) {
+        throw new Error(
+          `Invalid COMPOSE_SERVICE entry "${trimmed}". Must start with an alphanumeric character and contain only alphanumeric characters, dots, hyphens, or underscores.`,
+        );
+      }
+      composeServiceSet.add(trimmed);
+    }
+  }
+  const composeServices = Array.from(composeServiceSet);
+
+  const composeFile = env.COMPOSE_FILE?.trim() || undefined;
+  if (composeFile && composeFile.startsWith('-')) {
+    throw new Error(`Invalid COMPOSE_FILE "${composeFile}". Must not start with "-".`);
+  }
+  const composeBranch = env.COMPOSE_BRANCH?.trim() || undefined;
+
   const repoDir = path.resolve(env.REPO_DIR?.trim() || '/app/repo');
   const stateDir = path.resolve(env.STATE_DIR?.trim() || '/app/state');
 
@@ -212,6 +259,7 @@ export function loadConfig(
     checkIntervalMinutes,
     gitTimeoutMs: Math.round(gitTimeoutSeconds * 1000),
     buildTimeoutMs: Math.round(buildTimeoutSeconds * 1000),
+    composeTimeoutMs: Math.round(composeTimeoutSeconds * 1000),
     dockerfilePath,
     dockerImageName,
     dockerBuildFlags,
@@ -219,6 +267,11 @@ export function loadConfig(
     shouldTagEachBuild,
     buildScript,
     postBuildScript,
+    composeProjectDir,
+    composeProjectName,
+    composeServices,
+    composeFile,
+    composeBranch,
     webhookPort,
     webhookHost,
     webhookPath,

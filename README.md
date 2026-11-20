@@ -150,6 +150,25 @@ All configuration is done through environment variables:
 - `POST_BUILD_SCRIPT` - Path to a script run detached after a successful build (optional; see `scripts/post-build.sh.example`)
 - `GIT_TIMEOUT_SECONDS` - Timeout per git command in seconds (default: `300`; set `0` to disable)
 - `BUILD_TIMEOUT_SECONDS` - Timeout per Docker build / `BUILD_SCRIPT` in seconds (default: `1800`; set `0` to disable)
+- `COMPOSE_TIMEOUT_SECONDS` - Timeout for built-in Docker Compose redeploy in seconds (default: `300`; set `0` to disable)
+
+### Auto-Redeploy a Synology Container Manager Project (Optional)
+
+Instead of writing a custom `POST_BUILD_SCRIPT`, `syno-builder` can automatically recreate your Container Manager (Docker Compose) service after each successful build:
+
+- `COMPOSE_PROJECT_DIR` - Path to your Container Manager project folder inside the container (enables auto-redeploy). **Mount the folder at the exact same path as on the NAS host** (e.g., `-v /volume1/docker/my-app:/volume1/docker/my-app:ro`) so relative bind mounts and Container Manager UI labels stay in sync.
+- `COMPOSE_PROJECT_NAME` - Optional `-p` project name matching `com.docker.compose.project` (if omitted, Docker Compose uses `name:` in `compose.yaml` or the folder name).
+- `COMPOSE_SERVICE` - Optional comma-separated service name(s) to recreate with `--no-deps` (so sidecars like Postgres or Redis are not restarted).
+- `COMPOSE_FILE` - Optional custom compose filename inside `COMPOSE_PROJECT_DIR`.
+- `COMPOSE_BRANCH` - Optional branch filter when monitoring multiple branches (e.g., `COMPOSE_BRANCH=main`).
+
+To inspect the exact project name, service name, and folder path of your existing Container Manager project on Synology via SSH:
+
+```bash
+sudo docker ps --format "table {{.Names}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}"
+```
+
+> **Note:** If you place `syno-builder` inside the *same* Compose project as your app, set `COMPOSE_SERVICE` to your app service name so `docker compose` doesn't recreate `syno-builder` mid-run.
 
 ### Docker Build Environment Variables
 

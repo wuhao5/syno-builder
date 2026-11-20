@@ -33,7 +33,8 @@ Synology DSM Reverse Proxy (:443 -> 127.0.0.1:9000)
 │            │ 1. git fetch/reset (env auth)│                    │
 │            │ 2. Compare /app/state hash   │                    │
 │            │ 3. docker buildx / script    │                    │
-│            │ 4. Detached POST_BUILD_SCRIPT│                    │
+│            │ 4. Optional docker compose up│                    │
+│            │ 5. Detached POST_BUILD_SCRIPT│                    │
 │            └──────────────┬───────────────┘                    │
 └───────────────────────────┼────────────────────────────────────┘
                             ▼

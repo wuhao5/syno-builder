@@ -212,6 +212,71 @@ describe('loadConfig', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('loads and validates Docker Compose auto-redeploy options', () => {
+    const tmp = makeTempDir();
+    try {
+      const cfg = loadConfig({
+        GIT_REPO: 'https://github.com/user/repo.git',
+        COMPOSE_PROJECT_DIR: '/volume1/docker/my-app',
+        COMPOSE_PROJECT_NAME: 'my-app',
+        COMPOSE_SERVICE: ' web , worker , web ',
+        COMPOSE_FILE: 'compose.yaml',
+        COMPOSE_BRANCH: 'main',
+        COMPOSE_TIMEOUT_SECONDS: '120',
+        SECRETS_DIR: tmp,
+      });
+
+      assert.equal(cfg.composeProjectDir, path.resolve('/volume1/docker/my-app'));
+      assert.equal(cfg.composeProjectName, 'my-app');
+      assert.deepEqual(cfg.composeServices, ['web', 'worker']);
+      assert.equal(cfg.composeFile, 'compose.yaml');
+      assert.equal(cfg.composeBranch, 'main');
+      assert.equal(cfg.composeTimeoutMs, 120_000);
+
+      assert.throws(
+        () =>
+          loadConfig({
+            GIT_REPO: 'https://github.com/user/repo.git',
+            COMPOSE_PROJECT_NAME: '--bad-flag',
+            SECRETS_DIR: tmp,
+          }),
+        /Invalid COMPOSE_PROJECT_NAME/,
+      );
+
+      assert.throws(
+        () =>
+          loadConfig({
+            GIT_REPO: 'https://github.com/user/repo.git',
+            COMPOSE_SERVICE: 'web,--remove-orphans',
+            SECRETS_DIR: tmp,
+          }),
+        /Invalid COMPOSE_SERVICE/,
+      );
+
+      assert.throws(
+        () =>
+          loadConfig({
+            GIT_REPO: 'https://github.com/user/repo.git',
+            COMPOSE_FILE: '-evil.yml',
+            SECRETS_DIR: tmp,
+          }),
+        /Invalid COMPOSE_FILE/,
+      );
+
+      assert.throws(
+        () =>
+          loadConfig({
+            GIT_REPO: 'https://github.com/user/repo.git',
+            COMPOSE_TIMEOUT_SECONDS: '-5',
+            SECRETS_DIR: tmp,
+          }),
+        /Invalid COMPOSE_TIMEOUT_SECONDS/,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('parseDockerBuildFlags', () => {

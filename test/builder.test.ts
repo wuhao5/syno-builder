@@ -4,12 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  buildComposeArgs,
   buildDockerArgs,
   buildDockerImage,
   computeBuildMetadata,
   createBuildScriptEnv,
   discoverBuildSecrets,
   hasCustomDockerfileFlag,
+  shouldDeployCompose,
 } from '../src/builder.js';
 import type { Config } from '../src/config.js';
 
@@ -25,10 +27,12 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     checkIntervalMinutes: 60,
     gitTimeoutMs: 300_000,
     buildTimeoutMs: 1_800_000,
+    composeTimeoutMs: 300_000,
     dockerfilePath: 'docker',
     dockerImageName: 'myapp',
     dockerBuildFlags: [],
     shouldTagEachBuild: false,
+    composeServices: [],
     webhookPort: 9000,
     webhookHost: '0.0.0.0',
     webhookPath: '/webhook',
@@ -234,6 +238,191 @@ process.exit(1);
       process.env.PATH = originalPath;
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('redeploys configured Docker Compose project after build and tagging', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'syno-builder-compose-'));
+    const originalPath = process.env.PATH ?? '';
+    try {
+      const binDir = path.join(tmp, 'bin');
+      const repoDir = path.join(tmp, 'repo');
+      const contextDir = path.join(repoDir, 'docker');
+      const secretsDir = path.join(tmp, 'secrets');
+      const composeDir = path.join(tmp, 'my-project');
+      const logFile = path.join(tmp, 'docker-invocations.jsonl');
+
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(contextDir, { recursive: true });
+      fs.mkdirSync(secretsDir, { recursive: true });
+      fs.mkdirSync(composeDir, { recursive: true });
+      fs.writeFileSync(path.join(contextDir, 'Dockerfile'), 'FROM alpine:latest\n');
+      fs.writeFileSync(path.join(composeDir, 'compose.yaml'), 'services:\n  web:\n    image: myapp:latest\n');
+
+      const fakeDockerPath = path.join(binDir, 'docker');
+      fs.writeFileSync(
+        fakeDockerPath,
+        `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(logFile)}, JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }) + '\\n');
+`,
+        { mode: 0o755 },
+      );
+
+      process.env.PATH = `${binDir}${path.delimiter}${originalPath}`;
+
+      const cfg = makeConfig({
+        repoDir,
+        secretsDir,
+        dockerfilePath: 'docker',
+        dockerImageName: 'myapp',
+        composeProjectDir: composeDir,
+        composeProjectName: 'my-app',
+        composeServices: ['web', 'worker'],
+        composeBranch: 'main',
+      });
+
+      const ok = await buildDockerImage(cfg, 'main', 'abcdef1234567890');
+      assert.equal(ok, true);
+
+      const invocations = fs
+        .readFileSync(logFile, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as { cwd: string; args: string[] });
+
+      assert.equal(invocations.length, 3); // buildx build + tag :latest + compose up
+      const composeCall = invocations[2];
+      assert.ok(composeCall);
+      assert.equal(fs.realpathSync(composeCall.cwd), fs.realpathSync(composeDir));
+      assert.deepEqual(composeCall.args, [
+        'compose',
+        '-p',
+        'my-app',
+        'up',
+        '-d',
+        '--no-build',
+        '--no-deps',
+        'web',
+        'worker',
+      ]);
+
+      // Building a different branch should skip compose redeploy when COMPOSE_BRANCH=main
+      fs.writeFileSync(logFile, '');
+      const okFeature = await buildDockerImage(cfg, 'develop', 'abcdef1234567890');
+      assert.equal(okFeature, true);
+      const devInvocations = fs
+        .readFileSync(logFile, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as { cwd: string; args: string[] });
+      assert.equal(devInvocations.length, 1); // only buildx build (no :latest, no compose)
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('fails build step when COMPOSE_PROJECT_DIR does not exist or compose up fails', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'syno-builder-compose-fail-'));
+    const originalPath = process.env.PATH ?? '';
+    try {
+      const binDir = path.join(tmp, 'bin');
+      const repoDir = path.join(tmp, 'repo');
+      const contextDir = path.join(repoDir, 'docker');
+      const secretsDir = path.join(tmp, 'secrets');
+      const composeDir = path.join(tmp, 'existing-project');
+
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(contextDir, { recursive: true });
+      fs.mkdirSync(secretsDir, { recursive: true });
+      fs.mkdirSync(composeDir, { recursive: true });
+      fs.writeFileSync(path.join(contextDir, 'Dockerfile'), 'FROM alpine:latest\n');
+
+      const fakeDockerPath = path.join(binDir, 'docker');
+      fs.writeFileSync(
+        fakeDockerPath,
+        `#!/usr/bin/env node
+if (process.argv[2] === 'compose') {
+  process.exit(1);
+}
+`,
+        { mode: 0o755 },
+      );
+
+      process.env.PATH = `${binDir}${path.delimiter}${originalPath}`;
+
+      const missingDirCfg = makeConfig({
+        repoDir,
+        secretsDir,
+        dockerfilePath: 'docker',
+        composeProjectDir: path.join(tmp, 'does-not-exist'),
+      });
+      assert.equal(await buildDockerImage(missingDirCfg, 'main', 'abcdef1234567890'), false);
+
+      const failingComposeCfg = makeConfig({
+        repoDir,
+        secretsDir,
+        dockerfilePath: 'docker',
+        composeProjectDir: composeDir,
+      });
+      assert.equal(await buildDockerImage(failingComposeCfg, 'main', 'abcdef1234567890'), false);
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('compose helpers', () => {
+  it('builds docker compose up arguments cleanly', () => {
+    assert.deepEqual(
+      buildComposeArgs(makeConfig({ composeProjectDir: '/volume1/docker/app' })),
+      ['compose', 'up', '-d', '--no-build'],
+    );
+    assert.deepEqual(
+      buildComposeArgs(
+        makeConfig({
+          composeProjectDir: '/volume1/docker/app',
+          composeProjectName: 'my-app',
+          composeFile: 'docker-compose.prod.yml',
+          composeServices: ['web'],
+        }),
+      ),
+      [
+        'compose',
+        '-p',
+        'my-app',
+        '-f',
+        'docker-compose.prod.yml',
+        'up',
+        '-d',
+        '--no-build',
+        '--no-deps',
+        'web',
+      ],
+    );
+  });
+
+  it('respects COMPOSE_PROJECT_DIR and COMPOSE_BRANCH gating', () => {
+    assert.equal(shouldDeployCompose(makeConfig(), 'main'), false);
+    assert.equal(
+      shouldDeployCompose(makeConfig({ composeProjectDir: '/volume1/docker/app' }), 'develop'),
+      true,
+    );
+    assert.equal(
+      shouldDeployCompose(
+        makeConfig({ composeProjectDir: '/volume1/docker/app', composeBranch: 'main' }),
+        'main',
+      ),
+      true,
+    );
+    assert.equal(
+      shouldDeployCompose(
+        makeConfig({ composeProjectDir: '/volume1/docker/app', composeBranch: 'main' }),
+        'develop',
+      ),
+      false,
+    );
   });
 });
 

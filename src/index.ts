@@ -79,6 +79,29 @@ function logStartupSummary(config: Config): void {
   if (config.buildScript) {
     logger.info(`  Build Script:      ${config.buildScript}`);
   }
+  if (config.composeProjectDir) {
+    const projectLabel = config.composeProjectName ?? '(auto from folder / compose.yaml)';
+    const servicesLabel =
+      config.composeServices.length > 0 ? config.composeServices.join(', ') : '(all services)';
+    logger.info(`  Compose Redeploy:  ${config.composeProjectDir}`);
+    logger.info(`    Project Name:    ${projectLabel}`);
+    logger.info(`    Service(s):      ${servicesLabel}`);
+    if (config.composeFile) {
+      logger.info(`    Compose File:    ${config.composeFile}`);
+    }
+    if (config.composeBranch) {
+      logger.info(`    Branch Filter:   ${config.composeBranch}`);
+    }
+  } else if (
+    config.composeProjectName ||
+    config.composeServices.length > 0 ||
+    config.composeFile ||
+    config.composeBranch
+  ) {
+    logger.warn(
+      'COMPOSE_PROJECT_NAME / COMPOSE_SERVICE / COMPOSE_FILE / COMPOSE_BRANCH is set, but COMPOSE_PROJECT_DIR is not configured. Auto-redeploy is disabled.',
+    );
+  }
   if (config.postBuildScript) {
     logger.info(`  Post-Build Script: ${config.postBuildScript}`);
   }
@@ -99,7 +122,7 @@ function logStartupSummary(config: Config): void {
   }
   logger.info(`  Run On Startup:    ${config.runOnStartup}`);
   logger.info(
-    `  Timeouts:          git=${config.gitTimeoutMs > 0 ? `${Math.round(config.gitTimeoutMs / 1000)}s` : 'disabled'}, build=${config.buildTimeoutMs > 0 ? `${Math.round(config.buildTimeoutMs / 1000)}s` : 'disabled'}`,
+    `  Timeouts:          git=${config.gitTimeoutMs > 0 ? `${Math.round(config.gitTimeoutMs / 1000)}s` : 'disabled'}, build=${config.buildTimeoutMs > 0 ? `${Math.round(config.buildTimeoutMs / 1000)}s` : 'disabled'}, compose=${config.composeTimeoutMs > 0 ? `${Math.round(config.composeTimeoutMs / 1000)}s` : 'disabled'}`,
   );
   logger.info('=========================================================');
 }

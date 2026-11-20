@@ -21,6 +21,7 @@ RUN apk add --no-cache \
     git \
     docker-cli \
     docker-cli-buildx \
+    docker-cli-compose \
     bash \
     curl \
     && rm -rf /var/cache/apk/*
