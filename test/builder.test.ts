@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -35,6 +37,10 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     dockerBuildFlags: [],
     shouldTagEachBuild: false,
     composeServices: [],
+    watchtowerToken: '',
+    watchtowerTokenSource: 'none',
+    watchtowerTokenFile: '/app/secrets/watchtower_token',
+    watchtowerTimeoutMs: 120_000,
     webhookPort: 9000,
     webhookHost: '0.0.0.0',
     webhookPath: '/webhook',
@@ -405,6 +411,58 @@ if (process.argv[2] === 'compose') {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('triggers Watchtower HTTP API after successful build and tagging', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'syno-builder-wt-build-'));
+    const originalPath = process.env.PATH ?? '';
+    const wtRequests: Array<{ url: string; auth: string }> = [];
+
+    const mockWatchtower = http.createServer((req, res) => {
+      wtRequests.push({
+        url: req.url ?? '',
+        auth: req.headers.authorization ?? '',
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ summary: { scanned: 1, updated: 1, failed: 0 } }));
+    });
+
+    await new Promise<void>((resolve) => mockWatchtower.listen(0, '127.0.0.1', resolve));
+    const wtPort = (mockWatchtower.address() as AddressInfo).port;
+
+    try {
+      const binDir = path.join(tmp, 'bin');
+      const repoDir = path.join(tmp, 'repo');
+      const contextDir = path.join(repoDir, 'docker');
+      const secretsDir = path.join(tmp, 'secrets');
+
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(contextDir, { recursive: true });
+      fs.mkdirSync(secretsDir, { recursive: true });
+      fs.writeFileSync(path.join(contextDir, 'Dockerfile'), 'FROM alpine:latest\n');
+      fs.writeFileSync(path.join(binDir, 'docker'), '#!/usr/bin/env node\n', { mode: 0o755 });
+
+      process.env.PATH = `${binDir}${path.delimiter}${originalPath}`;
+
+      const cfg = makeConfig({
+        repoDir,
+        secretsDir,
+        dockerfilePath: 'docker',
+        dockerImageName: 'myapp',
+        watchtowerUrl: `http://127.0.0.1:${wtPort}`,
+        watchtowerToken: 'wt-tok',
+      });
+
+      const ok = await buildDockerImage(cfg, 'main', 'abcdef1234567890');
+      assert.equal(ok, true);
+      assert.deepEqual(wtRequests, [
+        { url: '/v1/update?image=myapp%3Alatest', auth: 'Bearer wt-tok' },
+      ]);
+    } finally {
+      process.env.PATH = originalPath;
+      await new Promise<void>((resolve) => mockWatchtower.close(() => resolve()));
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('compose helpers', () => {
@@ -466,6 +524,7 @@ describe('discoverBuildSecrets', () => {
     try {
       fs.writeFileSync(path.join(tmp, 'pat'), 'ghp_secret');
       fs.writeFileSync(path.join(tmp, 'webhook_secret'), 'hook_secret');
+      fs.writeFileSync(path.join(tmp, 'watchtower_token'), 'wt_secret');
       fs.writeFileSync(path.join(tmp, 'custom_hook_key'), 'custom_hook');
       fs.writeFileSync(path.join(tmp, '.hidden'), 'skip');
       fs.writeFileSync(path.join(tmp, 'db.conf'), 'postgres://...');

@@ -174,6 +174,21 @@ sudo docker ps --format "table {{.Names}}\t{{.Label \"com.docker.compose.project
 
 > **Note:** If you place `syno-builder` inside the *same* Compose project as your app, set `COMPOSE_SERVICE` to your app service name so `docker compose` doesn't recreate `syno-builder` mid-run.
 
+### Watchtower Integration & GitHub Package Forwarding (Optional)
+
+Set `WATCHTOWER_URL` (e.g., `http://watchtower:8080` on a shared Docker network) and `WATCHTOWER_TOKEN` / `/app/secrets/watchtower_token` to integrate with Watchtower's HTTP API (`nickfedor/watchtower` with `WATCHTOWER_HTTP_API_UPDATE=true`):
+
+- **Post-build local updates**: After every successful build & tag, `syno-builder` calls `POST ${WATCHTOWER_URL}/v1/update?image=<built-image>` (or `?container=<WATCHTOWER_CONTAINER>`). Works for both Compose projects and standalone containers without mounting your app's `compose.yaml`.
+- **GitHub `package` / `registry_package` (`published`) forwarding on `/webhook`**: Reuses your existing Synology Reverse Proxy URL and `WEBHOOK_SECRET`—when a linked GHCR container image is published, `syno-builder` extracts the image reference and forwards `POST /v1/update?image=<ghcr-image>` to Watchtower asynchronously (`202 Accepted`).
+
+Options:
+- `WATCHTOWER_URL` - Internal Watchtower base URL (e.g., `http://watchtower:8080`)
+- `WATCHTOWER_TOKEN_FILE` - Mounted token file (default: `/app/secrets/watchtower_token`, excluded from BuildKit secrets)
+- `WATCHTOWER_TOKEN` - Fallback environment variable for `WATCHTOWER_HTTP_API_TOKEN`
+- `WATCHTOWER_CONTAINER` / `WATCHTOWER_IMAGE` - Optional target override for post-build triggers
+- `WATCHTOWER_BRANCH` - Optional branch filter for post-build triggers
+- `WATCHTOWER_TIMEOUT_SECONDS` - Request timeout in seconds (default: `120`; `0` disables)
+
 ### Docker Build Environment Variables
 
 Passed automatically as `--build-arg` to `docker buildx build`:
@@ -187,7 +202,7 @@ Passed automatically as `--build-arg` to `docker buildx build`:
 ### Docker Build Secrets
 
 Mount secret files to `/app/secrets` (`-v /path/to/local/secrets:/app/secrets:ro`):
-- Every regular non-hidden file in `/app/secrets` — **except** `pat`, `webhook_secret`, and any custom `GIT_PAT_FILE` / `WEBHOOK_SECRET_FILE` paths — is automatically passed to `docker buildx build` as `--secret id=<filename>,src=<filepath>`.
+- Every regular non-hidden file in `/app/secrets` — **except** `pat`, `webhook_secret`, `watchtower_token`, and any custom `GIT_PAT_FILE` / `WEBHOOK_SECRET_FILE` / `WATCHTOWER_TOKEN_FILE` paths — is automatically passed to `docker buildx build` as `--secret id=<filename>,src=<filepath>`.
 
 ```dockerfile
 RUN --mount=type=secret,id=api-key,target=/run/secrets/api-key \

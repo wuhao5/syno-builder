@@ -33,6 +33,10 @@ function makeTestConfig(overrides: Partial<Config> = {}): Config {
     dockerBuildFlags: [],
     shouldTagEachBuild: false,
     composeServices: [],
+    watchtowerToken: '',
+    watchtowerTokenSource: 'none',
+    watchtowerTokenFile: '/app/secrets/watchtower_token',
+    watchtowerTimeoutMs: 120_000,
     webhookPort: 0,
     webhookHost: '127.0.0.1',
     webhookPath: '/webhook',
@@ -404,6 +408,111 @@ describe('webhook HTTP server', () => {
       assert.deepEqual(receivedTags, [
         { tag: 'v1.2.3', commit: '1122334455667788990011223344556677889900' },
         { tag: 'v2.0.0', commit: undefined },
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('forwards GitHub package published events on /webhook to Watchtower', async () => {
+    const forwarded: Array<{ image?: string; container?: string; source: string }> = [];
+    const cfg = makeTestConfig({
+      watchtowerUrl: 'http://watchtower:8080',
+      watchtowerToken: 'wt-bearer-secret',
+    });
+
+    const server = await startWebhookServer({
+      config: cfg,
+      onPush() {},
+      async onWatchtowerForward(target, meta) {
+        forwarded.push({ ...target, source: meta.source });
+        return {
+          ok: true,
+          statusCode: 200,
+          bodyText: '{}',
+          summary: { scanned: 1, updated: 1, failed: 0 },
+        };
+      },
+    });
+
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+
+    try {
+      // GitHub `package` published event on /webhook
+      const pkgBody = JSON.stringify({
+        action: 'published',
+        package: {
+          package_type: 'container',
+          name: 'syno-builder',
+          package_version: {
+            package_url: 'ghcr.io/wuhao5/syno-builder:latest',
+          },
+        },
+      });
+      const pkgRes = await fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-GitHub-Event': 'package',
+          'X-GitHub-Delivery': 'pkg-1',
+          'X-Hub-Signature-256': sign(cfg.webhookSecret, pkgBody),
+        },
+        body: pkgBody,
+      });
+      assert.equal(pkgRes.status, 202);
+      assert.deepEqual(await pkgRes.json(), {
+        status: 'forwarded',
+        image: 'ghcr.io/wuhao5/syno-builder:latest',
+      });
+
+      // GitHub `registry_package` published event also supported
+      const regPkgBody = JSON.stringify({
+        action: 'published',
+        registry_package: {
+          package_type: 'CONTAINER',
+          namespace: 'wuhao5',
+          name: 'myapp',
+          package_version: {
+            container_metadata: { tag: { name: 'v1.0.0' } },
+          },
+        },
+      });
+      const regPkgRes = await fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-GitHub-Event': 'registry_package',
+          'X-GitHub-Delivery': 'pkg-2',
+          'X-Hub-Signature-256': sign(cfg.webhookSecret, regPkgBody),
+        },
+        body: regPkgBody,
+      });
+      assert.equal(regPkgRes.status, 202);
+      assert.deepEqual(await regPkgRes.json(), {
+        status: 'forwarded',
+        image: 'ghcr.io/wuhao5/myapp:v1.0.0',
+      });
+
+      // Ignored non-published package action
+      const pkgDeleted = JSON.stringify({ action: 'deleted', package: { package_type: 'container' } });
+      const pkgDeletedRes = await fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-GitHub-Event': 'package',
+          'X-Hub-Signature-256': sign(cfg.webhookSecret, pkgDeleted),
+        },
+        body: pkgDeleted,
+      });
+      assert.equal(pkgDeletedRes.status, 200);
+      assert.deepEqual(await pkgDeletedRes.json(), {
+        status: 'ignored',
+        reason: 'unsupported package action',
+      });
+
+      assert.deepEqual(forwarded, [
+        { image: 'ghcr.io/wuhao5/syno-builder:latest', source: 'package' },
+        { image: 'ghcr.io/wuhao5/myapp:v1.0.0', source: 'package' },
       ]);
     } finally {
       await server.close();

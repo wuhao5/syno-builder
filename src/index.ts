@@ -7,6 +7,7 @@ import {
 import { loadConfig, type Config } from './config.js';
 import { logger } from './logger.js';
 import { BuildQueue } from './queue.js';
+import { triggerWatchtowerUpdate } from './watchtower.js';
 import { startWebhookServer, type WebhookServer } from './webhook.js';
 
 interface CliArgs {
@@ -145,6 +146,31 @@ function logStartupSummary(config: Config): void {
       'COMPOSE_PROJECT_NAME / COMPOSE_SERVICE / COMPOSE_FILE / COMPOSE_BRANCH is set, but COMPOSE_PROJECT_DIR is not configured. Auto-redeploy is disabled.',
     );
   }
+  if (config.watchtowerUrl) {
+    logger.info(`  Watchtower URL:    ${config.watchtowerUrl}`);
+    logger.info(
+      `    Watchtower Auth: ${
+        config.watchtowerTokenSource === 'file'
+          ? `file (${config.watchtowerTokenFile})`
+          : 'environment variable'
+      }`,
+    );
+    if (config.watchtowerContainer) {
+      logger.info(`    Target Filter:   container=${config.watchtowerContainer}`);
+    } else if (config.watchtowerImage) {
+      logger.info(`    Target Filter:   image=${config.watchtowerImage}`);
+    } else {
+      logger.info('    Target Filter:   image=(built image tag)');
+    }
+    if (config.watchtowerBranch) {
+      logger.info(`    Branch Filter:   ${config.watchtowerBranch}`);
+    }
+    if (config.triggerMode === 'webhook' || config.triggerMode === 'both') {
+      logger.info(
+        `    Package Events:  GitHub package (published) events on ${config.webhookPath} forwarded to Watchtower`,
+      );
+    }
+  }
   if (config.postBuildScript) {
     logger.info(`  Post-Build Script: ${config.postBuildScript}`);
   }
@@ -165,7 +191,7 @@ function logStartupSummary(config: Config): void {
   }
   logger.info(`  Run On Startup:    ${config.runOnStartup}`);
   logger.info(
-    `  Timeouts:          git=${config.gitTimeoutMs > 0 ? `${Math.round(config.gitTimeoutMs / 1000)}s` : 'disabled'}, build=${config.buildTimeoutMs > 0 ? `${Math.round(config.buildTimeoutMs / 1000)}s` : 'disabled'}, compose=${config.composeTimeoutMs > 0 ? `${Math.round(config.composeTimeoutMs / 1000)}s` : 'disabled'}`,
+    `  Timeouts:          git=${config.gitTimeoutMs > 0 ? `${Math.round(config.gitTimeoutMs / 1000)}s` : 'disabled'}, build=${config.buildTimeoutMs > 0 ? `${Math.round(config.buildTimeoutMs / 1000)}s` : 'disabled'}, compose=${config.composeTimeoutMs > 0 ? `${Math.round(config.composeTimeoutMs / 1000)}s` : 'disabled'}, watchtower=${config.watchtowerTimeoutMs > 0 ? `${Math.round(config.watchtowerTimeoutMs / 1000)}s` : 'disabled'}`,
   );
   logger.info('=========================================================');
 }
@@ -296,6 +322,9 @@ async function main(): Promise<void> {
             `Coalesced tag trigger for "${tag}" (already queued for next pass)`,
           );
         }
+      },
+      onWatchtowerForward(target) {
+        return triggerWatchtowerUpdate(config, target, shutdownController.signal);
       },
     });
     logger.info(

@@ -55,7 +55,8 @@ Synology DSM Reverse Proxy (:443 -> 127.0.0.1:9000)
 | :--- | :--- |
 | `src/index.ts` | Entrypoint, CLI (`--once`, `--branch`), mode startup, graceful `SIGTERM`/`SIGINT` shutdown |
 | `src/config.ts` | Environment variable & secret file loading with strict validation |
-| `src/webhook.ts` | `node:http` server (`/webhook`, `/health`), constant-time HMAC-SHA256 verification, branch `push` and tag `push`/`create` filtering |
+| `src/webhook.ts` | `node:http` server (`/webhook`, `/health`), constant-time HMAC-SHA256 verification, branch `push`, tag `push`/`create`, and GitHub `package` forwarding to Watchtower |
+| `src/watchtower.ts` | Watchtower HTTP API client (`POST /v1/update`) and GitHub `package` / `registry_package` image extraction |
 | `src/queue.ts` | Single-flight `BuildQueue` with duplicate branch/tag coalescing |
 | `src/git.ts` | Repository cloning, branch & tag fetch/checkout (peeling annotated tags), latest-tag discovery, and env-scoped `GIT_CONFIG_*` PAT auth |
 | `src/builder.ts` | BuildKit secret discovery (excluding `pat`/`webhook_secret`), branch/tag image tagging, `docker buildx build`, optional `docker compose up`, custom/post-build scripts |

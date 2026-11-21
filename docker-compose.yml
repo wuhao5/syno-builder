@@ -16,12 +16,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Recommended: Persist state across restarts
       - syno-builder-state:/app/state
-      # Optional: Mount secrets directory (for PAT, webhook_secret, and Docker BuildKit secrets)
-      # Reserved files 'pat' and 'webhook_secret' are automatically excluded from build secrets
+      # Optional: Mount secrets directory (for PAT, webhook_secret, watchtower_token, and Docker BuildKit secrets)
+      # Reserved files 'pat', 'webhook_secret', and 'watchtower_token' are automatically excluded from build secrets
       # - /path/to/secrets:/app/secrets:ro
       # Optional: Mount individual secret files
       # - /path/to/pat:/app/secrets/pat:ro
       # - /path/to/webhook_secret:/app/secrets/webhook_secret:ro
+      # - /path/to/watchtower_token:/app/secrets/watchtower_token:ro
       # Optional: Mount your Synology Container Manager project folder at the EXACT SAME path
       # to enable built-in auto-redeploy via COMPOSE_PROJECT_DIR (no post-build script needed)
       # - /volume1/docker/my-app:/volume1/docker/my-app:ro
@@ -51,6 +52,13 @@ services:
       # - COMPOSE_SERVICE=${COMPOSE_SERVICE:-}
       # - COMPOSE_FILE=${COMPOSE_FILE:-}
       # - COMPOSE_BRANCH=${COMPOSE_BRANCH:-}
+      # Optional: Trigger Watchtower after builds & forward GitHub package events to Watchtower
+      # - WATCHTOWER_URL=${WATCHTOWER_URL:-}
+      # - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-}
+      # - WATCHTOWER_TOKEN_FILE=${WATCHTOWER_TOKEN_FILE:-/app/secrets/watchtower_token}
+      # - WATCHTOWER_CONTAINER=${WATCHTOWER_CONTAINER:-}
+      # - WATCHTOWER_IMAGE=${WATCHTOWER_IMAGE:-}
+      # - WATCHTOWER_BRANCH=${WATCHTOWER_BRANCH:-}
       # Optional: Override startup check behavior (default: true in poll/both, false in webhook)
       # - RUN_ON_STARTUP=${RUN_ON_STARTUP:-}
       # Optional: Custom build / post-build script paths

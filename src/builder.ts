@@ -13,6 +13,7 @@ import {
   writeLastCommit,
   writeLastTagCommit,
 } from './state.js';
+import { triggerWatchtowerUpdate, type WatchtowerTarget } from './watchtower.js';
 
 export type BuildRefType = 'branch' | 'tag';
 
@@ -109,7 +110,7 @@ export function discoverBuildSecrets(
   }
 
   const resolvedSecretsDir = path.resolve(secretsDir);
-  const excludedNames = new Set<string>(['pat', 'webhook_secret']);
+  const excludedNames = new Set<string>(['pat', 'webhook_secret', 'watchtower_token']);
 
   for (const filePath of reservedFilePaths) {
     if (!filePath) continue;
@@ -345,6 +346,35 @@ export async function deployComposeProject(
   return true;
 }
 
+export function shouldTriggerWatchtower(
+  config: Config,
+  refName: string,
+  refType: BuildRefType = 'branch',
+): boolean {
+  if (!config.watchtowerUrl) {
+    return false;
+  }
+  if (config.watchtowerBranch) {
+    return refType === 'branch' && config.watchtowerBranch === refName;
+  }
+  return true;
+}
+
+export function resolveWatchtowerTarget(
+  config: Config,
+  metadata: BuildMetadata,
+): WatchtowerTarget {
+  if (config.watchtowerContainer) {
+    return {
+      container: config.watchtowerContainer,
+      ...(config.watchtowerImage ? { image: config.watchtowerImage } : {}),
+    };
+  }
+  return {
+    image: config.watchtowerImage ?? metadata.imageLatest ?? metadata.imageBranch,
+  };
+}
+
 export async function buildDockerImage(
   config: Config,
   refName: string,
@@ -377,6 +407,7 @@ export async function buildDockerImage(
   const secrets = discoverBuildSecrets(config.secretsDir, [
     config.gitPatFile,
     config.webhookSecretFile,
+    config.watchtowerTokenFile,
   ]);
   if (secrets.length > 0) {
     logger.info(`Mounting ${secrets.length} BuildKit secret(s): ${secrets.map((s) => s.id).join(', ')}`);
@@ -466,6 +497,23 @@ export async function buildDockerImage(
   } else if (config.composeProjectDir && config.composeBranch) {
     logger.info(
       `Skipping Docker Compose redeploy for ${refLabel} (COMPOSE_BRANCH=${config.composeBranch})`,
+    );
+  }
+
+  if (signal?.aborted) {
+    logger.warn(`Skipping Watchtower trigger for ${refLabel} due to shutdown.`);
+    return false;
+  }
+
+  if (shouldTriggerWatchtower(config, refName, refType)) {
+    const target = resolveWatchtowerTarget(config, metadata);
+    const wtResult = await triggerWatchtowerUpdate(config, target, signal);
+    if (!wtResult.ok) {
+      return false;
+    }
+  } else if (config.watchtowerUrl && config.watchtowerBranch) {
+    logger.info(
+      `Skipping Watchtower trigger for ${refLabel} (WATCHTOWER_BRANCH=${config.watchtowerBranch})`,
     );
   }
 

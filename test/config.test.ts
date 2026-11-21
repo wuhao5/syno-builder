@@ -329,6 +329,57 @@ describe('loadConfig', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('loads and validates Watchtower integration options', () => {
+    const tmp = makeTempDir();
+    try {
+      fs.writeFileSync(path.join(tmp, 'watchtower_token'), 'wt_from_file\n');
+
+      const cfg = loadConfig({
+        GIT_REPO: 'https://github.com/user/repo.git',
+        WATCHTOWER_URL: 'http://watchtower:8080/',
+        WATCHTOWER_CONTAINER: 'my-app',
+        WATCHTOWER_TIMEOUT_SECONDS: '45',
+        SECRETS_DIR: tmp,
+      });
+
+      assert.equal(cfg.watchtowerUrl, 'http://watchtower:8080');
+      assert.equal(cfg.watchtowerToken, 'wt_from_file');
+      assert.equal(cfg.watchtowerTokenSource, 'file');
+      assert.equal(cfg.watchtowerContainer, 'my-app');
+      assert.equal(cfg.watchtowerTimeoutMs, 45_000);
+
+      // Missing token when WATCHTOWER_URL is set
+      const emptyDir = makeTempDir();
+      try {
+        assert.throws(
+          () =>
+            loadConfig({
+              GIT_REPO: 'https://github.com/user/repo.git',
+              WATCHTOWER_URL: 'http://watchtower:8080',
+              SECRETS_DIR: emptyDir,
+            }),
+          /Watchtower token is required/,
+        );
+      } finally {
+        fs.rmSync(emptyDir, { recursive: true, force: true });
+      }
+
+      // Invalid URL scheme
+      assert.throws(
+        () =>
+          loadConfig({
+            GIT_REPO: 'https://github.com/user/repo.git',
+            WATCHTOWER_URL: 'ftp://watchtower:8080',
+            WATCHTOWER_TOKEN: 'tok',
+            SECRETS_DIR: tmp,
+          }),
+        /Invalid WATCHTOWER_URL/,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('matchesTagPattern', () => {

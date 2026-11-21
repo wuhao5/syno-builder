@@ -4,6 +4,12 @@ import type { AddressInfo } from 'node:net';
 import { matchesTagPattern, type Config } from './config.js';
 import { normalizeRepoUrl } from './git.js';
 import { logger } from './logger.js';
+import {
+  extractPackageImageRef,
+  triggerWatchtowerUpdate,
+  type WatchtowerResult,
+  type WatchtowerTarget,
+} from './watchtower.js';
 
 export const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024; // 1 MB
 const ZERO_SHA = '0000000000000000000000000000000000000000';
@@ -14,10 +20,19 @@ export interface PushEventMeta {
   deliveryId?: string;
 }
 
+export interface WatchtowerForwardMeta {
+  deliveryId?: string;
+  source: 'package';
+}
+
 export interface WebhookServerOptions {
   config: Config;
   onPush: (branch: string, meta: PushEventMeta) => void;
   onTag?: (tag: string, meta: PushEventMeta) => void;
+  onWatchtowerForward?: (
+    target: WatchtowerTarget,
+    meta: WatchtowerForwardMeta,
+  ) => Promise<WatchtowerResult>;
   maxBodyBytes?: number;
 }
 
@@ -170,21 +185,31 @@ function getHeader(req: IncomingMessage, name: string): string | undefined {
 export function createWebhookRequestListener(
   options: WebhookServerOptions,
 ): http.RequestListener {
-  const { config, onPush, onTag, maxBodyBytes = MAX_WEBHOOK_BODY_BYTES } = options;
+  const {
+    config,
+    onPush,
+    onTag,
+    onWatchtowerForward,
+    maxBodyBytes = MAX_WEBHOOK_BODY_BYTES,
+  } = options;
   const trackedBranches = new Set(config.gitBranches);
   const tagBuildsEnabled = config.gitTagPatterns.length > 0;
   const expectedRepo = normalizeRepoUrl(config.gitRepo);
+  const forwardToWatchtower =
+    onWatchtowerForward ??
+    ((target: WatchtowerTarget) => triggerWatchtowerUpdate(config, target));
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const rawUrl = req.url ?? '/';
-    let pathname: string;
+    let parsedUrl: URL;
     try {
-      pathname = new URL(rawUrl, 'http://localhost').pathname;
+      parsedUrl = new URL(rawUrl, 'http://localhost');
     } catch {
       sendJson(res, 400, { error: 'Invalid request URL' });
       return;
     }
 
+    const pathname = parsedUrl.pathname;
     const normalizedPathname =
       pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
 
@@ -252,6 +277,58 @@ export function createWebhookRequestListener(
     if (event === 'ping') {
       logger.info(`Received GitHub ping webhook (delivery=${deliveryId ?? 'unknown'})`);
       sendJson(res, 200, { status: 'pong' });
+      return;
+    }
+
+    if (event === 'package' || event === 'registry_package') {
+      const payload = parseWebhookPayload(rawBody, getHeader(req, 'content-type'));
+      if (!payload) {
+        logger.warn(`Rejected malformed ${event} payload (delivery=${deliveryId ?? 'unknown'})`);
+        sendJson(res, 400, { error: 'Invalid JSON payload' });
+        return;
+      }
+
+      const action = typeof payload.action === 'string' ? payload.action.toLowerCase() : '';
+      if (action !== 'published') {
+        logger.info(
+          `Ignoring GitHub ${event} event with action="${action || 'unknown'}" (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'unsupported package action' });
+        return;
+      }
+
+      if (!config.watchtowerUrl) {
+        logger.info(
+          `Ignoring GitHub ${event} event because WATCHTOWER_URL is not configured (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'watchtower not configured' });
+        return;
+      }
+
+      const image = extractPackageImageRef(payload);
+      if (!image) {
+        logger.info(
+          `Ignoring GitHub ${event} event: could not extract container image reference (delivery=${deliveryId ?? 'unknown'})`,
+        );
+        sendJson(res, 200, { status: 'ignored', reason: 'unsupported package type' });
+        return;
+      }
+
+      logger.info(
+        `Forwarding GitHub ${event} published event for "${image}" to Watchtower (delivery=${deliveryId ?? 'unknown'})`,
+      );
+      void forwardToWatchtower({ image }, { deliveryId, source: 'package' }).catch(
+        (err: unknown) => {
+          logger.error(
+            `Async Watchtower package forward failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        },
+      );
+
+      sendJson(res, 202, {
+        status: 'forwarded',
+        image,
+      });
       return;
     }
 

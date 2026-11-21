@@ -29,6 +29,14 @@ export interface Config {
   composeServices: string[];
   composeFile?: string;
   composeBranch?: string;
+  watchtowerUrl?: string;
+  watchtowerToken: string;
+  watchtowerTokenSource: 'file' | 'env' | 'none';
+  watchtowerTokenFile: string;
+  watchtowerImage?: string;
+  watchtowerContainer?: string;
+  watchtowerBranch?: string;
+  watchtowerTimeoutMs: number;
   webhookPort: number;
   webhookHost: string;
   webhookPath: string;
@@ -208,6 +216,17 @@ export function loadConfig(
     );
   }
 
+  const rawWatchtowerTimeout = env.WATCHTOWER_TIMEOUT_SECONDS?.trim();
+  const watchtowerTimeoutSeconds =
+    rawWatchtowerTimeout !== undefined && rawWatchtowerTimeout !== ''
+      ? Number(rawWatchtowerTimeout)
+      : 120;
+  if (!Number.isFinite(watchtowerTimeoutSeconds) || watchtowerTimeoutSeconds < 0) {
+    throw new Error(
+      `Invalid WATCHTOWER_TIMEOUT_SECONDS "${env.WATCHTOWER_TIMEOUT_SECONDS}". Must be a non-negative number (0 disables timeout).`,
+    );
+  }
+
   const rawPort = env.WEBHOOK_PORT?.trim();
   const webhookPort = rawPort ? Number(rawPort) : 9000;
   if (!Number.isInteger(webhookPort) || webhookPort < 1 || webhookPort > 65535) {
@@ -221,9 +240,40 @@ export function loadConfig(
   const gitPatFile = env.GIT_PAT_FILE?.trim() || path.join(secretsDir, 'pat');
   const webhookSecretFile =
     env.WEBHOOK_SECRET_FILE?.trim() || path.join(secretsDir, 'webhook_secret');
+  const watchtowerTokenFile =
+    env.WATCHTOWER_TOKEN_FILE?.trim() || path.join(secretsDir, 'watchtower_token');
 
   const gitPatResult = readSecret(gitPatFile, env.GIT_PAT, true);
   const webhookSecretResult = readSecret(webhookSecretFile, env.WEBHOOK_SECRET, false);
+  const watchtowerTokenResult = readSecret(watchtowerTokenFile, env.WATCHTOWER_TOKEN, true);
+
+  const rawWatchtowerUrl = env.WATCHTOWER_URL?.trim();
+  let watchtowerUrl: string | undefined;
+  if (rawWatchtowerUrl) {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(rawWatchtowerUrl);
+    } catch {
+      throw new Error(
+        `Invalid WATCHTOWER_URL "${rawWatchtowerUrl}". Expected an http:// or https:// URL (e.g. http://watchtower:8080).`,
+      );
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new Error(
+        `Invalid WATCHTOWER_URL "${rawWatchtowerUrl}". Only http:// and https:// schemes are supported.`,
+      );
+    }
+    watchtowerUrl = rawWatchtowerUrl.replace(/\/+$/, '');
+    if (!watchtowerTokenResult.value) {
+      throw new Error(
+        `Watchtower token is required when WATCHTOWER_URL is set. Mount ${watchtowerTokenFile} or set WATCHTOWER_TOKEN.`,
+      );
+    }
+  }
+
+  const watchtowerImage = env.WATCHTOWER_IMAGE?.trim() || undefined;
+  const watchtowerContainer = env.WATCHTOWER_CONTAINER?.trim() || undefined;
+  const watchtowerBranch = env.WATCHTOWER_BRANCH?.trim() || undefined;
 
   const webhookEnabled = triggerMode === 'webhook' || triggerMode === 'both';
   const requireWebhookSecret = options.requireWebhookSecret ?? webhookEnabled;
@@ -310,6 +360,14 @@ export function loadConfig(
     composeServices,
     composeFile,
     composeBranch,
+    watchtowerUrl,
+    watchtowerToken: watchtowerTokenResult.value,
+    watchtowerTokenSource: watchtowerTokenResult.source,
+    watchtowerTokenFile,
+    watchtowerImage,
+    watchtowerContainer,
+    watchtowerBranch,
+    watchtowerTimeoutMs: Math.round(watchtowerTimeoutSeconds * 1000),
     webhookPort,
     webhookHost,
     webhookPath,
